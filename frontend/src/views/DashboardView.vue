@@ -2,11 +2,6 @@
 <!-- Copyright (C) 2026 Nguyễn Tiến Lộc -->
 <template>
   <div class="airtable-scope dh-v4">
-    <!-- Attribution marquee (Apache License) -->
-    <div v-if="attribution.enabled.value" class="dh-attr">
-      <a :href="attribution.href" target="_blank" rel="noopener">{{ attribution.text }}</a>
-    </div>
-
     <!-- ── Role-tab strip — chỉ hiện khi có quyền >1 tab (sale ẩn) ── -->
     <div v-if="hub.hasTeamSection.value || hub.hasSystemSection.value" class="at-roletabs">
       <button class="at-roletab" :class="{ 'is-active': activeTab === 'me' }" @click="activeTab = 'me'">
@@ -453,6 +448,11 @@
         </div>
       </div>
     </div>
+
+    <!-- Attribution (Apache License) -->
+    <div v-if="attribution.enabled.value" class="dh-attr">
+      <a :href="attribution.href" target="_blank" rel="noopener">{{ attribution.text }}</a>
+    </div>
   </div>
 </template>
 
@@ -671,9 +671,11 @@ function onOutsideClick(e: MouseEvent) {
   --prio-c: #dc2626;
 }
 .dh-attr {
-  font-size: 10px; color: var(--at-hint, #97a0b3);
-  padding: 2px 14px; text-align: center; opacity: 0.7;
+  font-size: 9px; color: var(--at-hint, #97a0b3);
+  padding: 10px 14px 2px; text-align: center; opacity: 0.55;
 }
+.dh-attr a { color: inherit; text-decoration: none; }
+.dh-attr a:hover { text-decoration: underline; }
 .dh-tabpanel { animation: dh-fade 0.15s ease-out; }
 @keyframes dh-fade { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
 

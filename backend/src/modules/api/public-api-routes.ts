@@ -25,8 +25,59 @@ async function apiKeyAuth(request: FastifyRequest, reply: FastifyReply) {
 
 // ── Route registration ────────────────────────────────────────────────────────
 
+// ── ContactAccess helpers ─────────────────────────────────────────────────────
+// Trong ZaloCRM, thứ quyết định một sale CÓ NHÌN THẤY khách hay không là bản ghi
+// ContactAccess (xem getContactScope): owner/admin thấy tất cả, mọi role khác chỉ thấy
+// contact có ContactAccess trỏ tới mình. Contact tạo qua public API mà không có bản ghi này
+// thì sale được giao vẫn không thấy gì — nên mọi đường gán assignedUserId ở đây đều phải
+// tạo ContactAccess kèm theo, đúng như luồng tạo KH trong giao diện đang làm.
+
+async function assertOrgUser(orgId: string, userId: string): Promise<boolean> {
+  const u = await prisma.user.findFirst({
+    where: { id: userId, orgId, isActive: true },
+    select: { id: true },
+  });
+  return !!u;
+}
+
+async function grantPrimary(orgId: string, contactId: string, userId: string): Promise<void> {
+  await prisma.contactAccess.upsert({
+    where: { contactId_userId: { contactId, userId } },
+    update: { role: 'primary' },
+    create: { orgId, contactId, userId, role: 'primary', source: 'public_api_assignment' },
+  });
+}
+
+async function grantCollaborator(orgId: string, contactId: string, userId: string): Promise<void> {
+  await prisma.contactAccess.upsert({
+    where: { contactId_userId: { contactId, userId } },
+    update: {}, // đã có thì giữ nguyên role (không hạ primary xuống collaborator)
+    create: { orgId, contactId, userId, role: 'collaborator', source: 'public_api_assignment' },
+  });
+}
+
+// ── Route registration ────────────────────────────────────────────────────────
+
 export async function publicApiRoutes(app: FastifyInstance): Promise<void> {
   app.addHook('preHandler', apiKeyAuth);
+
+  // ── Users ────────────────────────────────────────────────────────────────
+  // Cho hệ thống ngoài (vd Apps Script chia lead) ánh xạ tên sale → userId trước khi
+  // gửi assignedUserId. Chỉ trả user đang hoạt động của org gắn với API key.
+  app.get('/api/public/users', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const orgId = (request as any).orgId as string;
+      const users = await prisma.user.findMany({
+        where: { orgId, isActive: true },
+        select: { id: true, fullName: true, email: true, phone: true, role: true },
+        orderBy: { fullName: 'asc' },
+      });
+      return { users };
+    } catch (err) {
+      logger.error('[public-api] GET /users error:', err);
+      return reply.status(500).send({ error: 'Failed to fetch users' });
+    }
+  });
 
   // ── Contacts ─────────────────────────────────────────────────────────────
 
@@ -93,6 +144,12 @@ export async function publicApiRoutes(app: FastifyInstance): Promise<void> {
         return reply.status(400).send({ error: 'fullName or phone is required' });
       }
 
+      // Gán sale phụ trách (tuỳ chọn). Sai userId thì báo lỗi to thay vì tạo contact vô chủ
+      // im lặng — bên gọi nên resolve tên sale qua GET /api/public/users trước.
+      if (body.assignedUserId && !(await assertOrgUser(orgId, body.assignedUserId))) {
+        return reply.status(400).send({ error: 'assignedUserId not found in this organization' });
+      }
+
       const contact = await prisma.contact.create({
         data: {
           orgId,
@@ -103,8 +160,13 @@ export async function publicApiRoutes(app: FastifyInstance): Promise<void> {
           status: body.status ?? 'new',
           notes: body.notes,
           tags: body.tags ?? [],
+          assignedUserId: body.assignedUserId || undefined,
         },
       });
+
+      if (contact.assignedUserId) {
+        await grantPrimary(orgId, contact.id, contact.assignedUserId);
+      }
 
       return reply.status(201).send(contact);
     } catch (err) {
@@ -119,8 +181,19 @@ export async function publicApiRoutes(app: FastifyInstance): Promise<void> {
       const { id } = request.params as { id: string };
       const body = request.body as Record<string, any>;
 
-      const existing = await prisma.contact.findFirst({ where: { id, orgId }, select: { id: true } });
+      const existing = await prisma.contact.findFirst({
+        where: { id, orgId },
+        select: { id: true, assignedUserId: true },
+      });
       if (!existing) return reply.status(404).send({ error: 'Contact not found' });
+
+      if (body.assignedUserId && !(await assertOrgUser(orgId, body.assignedUserId))) {
+        return reply.status(400).send({ error: 'assignedUserId not found in this organization' });
+      }
+
+      // KH đã có người phụ trách thì KHÔNG cướp quyền: giữ nguyên assignedUserId, chỉ cấp
+      // thêm quyền xem (collaborator) cho người mới. KH chưa ai phụ trách thì gán primary.
+      const takeOver = !!body.assignedUserId && !existing.assignedUserId;
 
       const updated = await prisma.contact.update({
         where: { id },
@@ -132,8 +205,14 @@ export async function publicApiRoutes(app: FastifyInstance): Promise<void> {
           status: body.status,
           notes: body.notes,
           tags: body.tags,
+          assignedUserId: takeOver ? body.assignedUserId : undefined,
         },
       });
+
+      if (body.assignedUserId) {
+        if (takeOver) await grantPrimary(orgId, id, body.assignedUserId);
+        else await grantCollaborator(orgId, id, body.assignedUserId);
+      }
 
       return updated;
     } catch (err) {

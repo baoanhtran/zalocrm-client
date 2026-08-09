@@ -276,11 +276,19 @@ input, select, textarea { font-family: inherit; }
 /* ===== App shell ===== */
   html, body { height: 100%; }
   #app { display: flex; flex-direction: column; height: 100vh; }
-  /* min-width:1100 chỉ cho desktop/tablet (≥768px). Dưới 768px (điện thoại) BỎ ép
-     1100px — nếu không, trang /login (AuthLayout) + bản mobile bị căng theo 1100px
-     rồi card căn-giữa văng sang phải, mất hút ngoài màn hình thật (F12 không lộ).
-     768 = MOBILE_BREAKPOINT của use-mobile.ts. (fix lệch login mobile 2026-06-23) */
-  @media (min-width: 768px) { #app { min-width: 1100px; } }
+  /* min-width:1100 CHỈ ép khi viewport đã thực sự ≥1100px — tức là nó không bao giờ
+     tạo ra tràn, chỉ giữ khung cho desktop.
+     KHÔNG hạ ngưỡng này xuống nữa. Lịch sử:
+       - Ban đầu ép vô điều kiện → /login (AuthLayout) + mobile bị căng 1100px, card
+         căn-giữa văng sang phải mất hút (fix lệch login mobile 2026-06-23 → chặn ở 768).
+       - Mốc 768 vẫn bỏ sót dải 768–1099 = ĐÚNG iPad dọc (820 / 834 / 1024). Ở dải đó
+         app bị ép 1100px trong khi main.css khoá `html,body{overflow:hidden}` → phần
+         thừa bị CẮT CỤT và không vuốt tới được: iPad 820 mất 280px, iPad 768 mất 332px,
+         avatar + chuông + nút cài đặt nằm ngoài màn, không bấm được. Đo được ở 22/22 route.
+     → Ngưỡng = 1100px để dải tablet co giãn tự nhiên. Topnav co lại nhờ block
+       `@media (max-width:1099.98px)` trong DefaultLayout.vue (bỏ icon + cho vuốt ngang).
+     (fix tràn viền phải trên iPad 2026-08-09) */
+  @media (min-width: 1100px) { #app { min-width: 1100px; } }
 
   /* Top nav */
   .nav {

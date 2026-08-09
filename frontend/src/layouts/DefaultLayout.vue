@@ -451,8 +451,25 @@ function logout() {
 @media (max-width: 1280px) {
   .nav-tab { padding: 7px 9px; font-size: 12px; gap: 5px; }
 }
-@media (max-width: 1100px) {
+/* Tablet (iPad dọc 768–1099) — cặp đúng với `@media (min-width:1100px)` ép #app
+   min-width:1100 ở hs-crm-theme.css: dưới mốc đó khung co tự do nên topnav phải tự lo.
+   9 tab cần 790px + brand 73 + icon phải 98 + padding 28 = 1006px > 820px của iPad dọc.
+   Nếu để `.nav-tabs{flex-shrink:0}` như cũ thì nav đẩy avatar/chuông ra ngoài màn.
+   → bỏ icon trong tab (giữ chữ, dễ đọc hơn icon-only) + cho vuốt ngang phần dư.
+   Đo sau khi sửa: 820px chỉ còn 80px phải vuốt, avatar luôn nằm trong màn.
+   (fix tràn viền phải trên iPad 2026-08-09) */
+@media (max-width: 1099.98px) {
   .nav-tab { padding: 6px 7px; gap: 4px; }
+  .nav-tabs {
+    flex-shrink: 1;
+    overflow-x: auto;
+    /* vuốt mượt trên iPad + giấu scrollbar cho gọn thanh nav 48px */
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .nav-tabs::-webkit-scrollbar { display: none; }
+  /* icon chỉ là trang trí — chữ mới là thứ điều hướng. Bỏ icon lấy lại ~145px. */
+  .nav-tab .ic-svg { display: none; }
 }
 
 .topnav-spacer { flex: 1; min-width: 0; }

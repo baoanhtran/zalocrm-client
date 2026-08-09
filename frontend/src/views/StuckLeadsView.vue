@@ -342,6 +342,11 @@ onMounted(loadData);
   align-items: center;
   gap: 16px;
   margin-bottom: 24px;
+  /* Trang này render trong MobileLayout y như bản desktop. Không có flex-wrap thì
+     4 khối (Quay lại + h1 + ô tìm + 2 nút) bị ép 1 hàng: ở 360px tràn 46px, ở 320px
+     tràn 86px và ô tìm bị bóp còn 46px không gõ được. html/body khoá overflow nên
+     phần tràn mất luôn, không vuốt tới. (fix tràn viền phải trên điện thoại 2026-08-09) */
+  flex-wrap: wrap;
 }
 .stuck-header h1 {
   font-size: 24px;
@@ -389,6 +394,10 @@ onMounted(loadData);
   flex: 1;
   max-width: 360px;
   margin: 0 12px;
+}
+/* Điện thoại: ô tìm ăn trọn 1 hàng riêng thay vì chen cùng h1 rồi bị bóp còn 46px. */
+@media (max-width: 640px) {
+  .stuck-search { flex: 1 0 100%; margin: 0; max-width: none; }
 }
 .search-input {
   width: 100%;

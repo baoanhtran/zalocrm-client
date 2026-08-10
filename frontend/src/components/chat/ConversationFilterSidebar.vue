@@ -887,13 +887,28 @@ async function onLockBadgeClick(_wasUnlocked: boolean) {
 }
 
 // ─── Collapse state ──────────────────────────────────────
-const collapsed = ref(localStorage.getItem('filter-sidebar-collapsed') === '1');
+/* Tablet (≤1200px) LUÔN khởi động ở rail 56px.
+   Trước 2026-08-10 dải này bị ChatView `display:none` cả sidebar → iPad mất sạch bộ lọc.
+   Nay hiện lại dạng rail, nhưng KHÔNG thể tôn trọng tuỳ chọn 'mở rộng' lưu từ desktop:
+   sidebar mở chiếm 240/820px nên vùng đọc tin chỉ còn 280px. Ép thu gọn khi màn hẹp;
+   người dùng vẫn bấm » mở rộng tay được (ChatView có template riêng cho trạng thái mở). */
+const TABLET_MAX = 1200;
+const collapsed = ref(
+  window.innerWidth <= TABLET_MAX || localStorage.getItem('filter-sidebar-collapsed') === '1',
+);
 function toggleCollapsed() {
   collapsed.value = !collapsed.value;
   localStorage.setItem('filter-sidebar-collapsed', collapsed.value ? '1' : '0');
   // Close any open popover when toggling collapse
   openPopover.value = null;
 }
+/* Xoay ngang↔dọc iPad, hoặc thu cửa sổ desktop qua mốc 1200 → kéo về rail, tránh kẹt ở
+   trạng thái mở rộng 240px trên màn hẹp. Chỉ ép một chiều: rộng ra thì giữ nguyên lựa chọn. */
+function syncCollapseWithWidth() {
+  if (window.innerWidth <= TABLET_MAX && !collapsed.value) collapsed.value = true;
+}
+onMounted(() => window.addEventListener('resize', syncCollapseWithWidth));
+onUnmounted(() => window.removeEventListener('resize', syncCollapseWithWidth));
 
 // ─── Collapsed mode popover state ────────────────────────
 type PopoverKey = 'tag' | 'message' | 'score' | 'time' | 'event' | 'sale' | 'preset';

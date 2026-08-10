@@ -881,33 +881,50 @@ watch(searchQuery, () => {
     grid-template-columns: 56px 280px 1fr;
   }
 }
-/* < 1200: drop filter rail */
+/* ══ Tablet ≤1200 — filter sidebar hiện dạng RAIL 56px, KHÔNG ẩn nữa ══
+   LUẬT SỐNG CÒN của khối này: đã `display:none` một con thì TUYỆT ĐỐI không được chừa
+   track cho nó. Phần tử display:none KHÔNG phải grid item, nên các con còn lại dồn trái
+   một cột. Bug cũ ở đây: template `0 320px 1fr` chừa cột placeholder cho sidebar rồi lại
+   display:none chính sidebar → conv-col rơi vào track `0` (rộng 0px, mất hút), thread rơi
+   vào track `320px`, track `1fr` bỏ trống → /chat TRẮNG TRƠN. Dính cả iPad dọc 820 lẫn
+   iPad Air ngang 1180.
+   Nay sidebar luôn có mặt (ConversationFilterSidebar ép collapsed khi ≤1200) nên số track
+   khớp số con. Liệt kê đủ 4 tổ hợp thu-gọn/mở-rộng × có/không info-col, và mỗi tổ hợp phải
+   đạt specificity ≥ (0,3,0) để thắng các mốc 1280/1366 bên trên. (2026-08-10) */
 @media (max-width: 1200px) {
-  .smax-chat-grid { grid-template-columns: 0 320px 1fr 280px; }
-  .smax-chat-grid:not(:has(.smax-info-col)) {
-    grid-template-columns: 0 320px 1fr;
-  }
-  .smax-chat-grid > :first-child { display: none; }
-}
-/* < 1024 (iPad dọc): bỏ luôn info panel — chỉ còn conv list + thread.
-   PHẢI liệt kê đủ các biến thể :has()/:not() như những mốc bên trên. Trước đây khối này
-   chỉ có `.smax-chat-grid` trần = specificity (0,1,0), nên bị rule của mốc 1200
-   `.smax-chat-grid:not(:has(.smax-info-col))` = (0,2,0) đè — specificity cao hơn thì
-   THẮNG bất kể nằm sau hay trước. Hậu quả: grid vẫn ăn template 3 cột `0 320px 1fr`
-   của mốc 1200 → cột hội thoại rộng 0px (mất hút) + cột 3 rỗng chiếm ~500px
-   → /chat trắng trơn trên iPad dọc. Lỗi có sẵn, chỉ lộ ra khi thôi ép #app 1100px.
-   (fix chat trắng trên iPad 2026-08-10) */
-@media (max-width: 1024px) {
-  .smax-chat-grid,
-  .smax-chat-grid:not(:has(.smax-info-col)),
-  .smax-chat-grid:has(.filter-rail.collapsed),
   .smax-chat-grid:has(.filter-sidebar.collapsed),
-  .smax-chat-grid:has(.filter-rail.collapsed):not(:has(.smax-info-col)),
-  .smax-chat-grid:has(.filter-sidebar.collapsed):not(:has(.smax-info-col)) {
-    grid-template-columns: 320px 1fr;
+  .smax-chat-grid:has(.filter-sidebar.collapsed):has(.smax-info-col) {
+    grid-template-columns: 56px 300px 1fr 280px;
   }
-  .smax-chat-grid > :first-child,
+  .smax-chat-grid:has(.filter-sidebar.collapsed):not(:has(.smax-info-col)) {
+    grid-template-columns: 56px 300px 1fr;
+  }
+  /* người dùng tự bấm » bung sidebar trên tablet — thread hẹp lại nhưng là chủ ý của họ */
+  .smax-chat-grid:not(:has(.filter-sidebar.collapsed)),
+  .smax-chat-grid:not(:has(.filter-sidebar.collapsed)):has(.smax-info-col) {
+    grid-template-columns: 240px 300px 1fr 280px;
+  }
+  .smax-chat-grid:not(:has(.filter-sidebar.collapsed)):not(:has(.smax-info-col)) {
+    grid-template-columns: 240px 300px 1fr;
+  }
+}
+/* ══ iPad dọc ≤1024 — bỏ thêm info panel, còn 3 cột ══
+   `:has(.smax-info-col)` xét SỰ TỒN TẠI trong DOM, không xét display. Nên khi ẩn info panel
+   bằng display:none mà vẫn dùng template 4 track thì track thứ 4 vẫn bị chừa 280px → thừa
+   một khoảng trống bên phải, đúng lại cái bẫy ở trên. Vì vậy ở đây ép 3 track cho CẢ hai
+   trường hợp có/không .smax-info-col trong DOM. (2026-08-10) */
+@media (max-width: 1024px) {
   .smax-chat-grid > :nth-child(4) { display: none; }
+  .smax-chat-grid:has(.filter-sidebar.collapsed),
+  .smax-chat-grid:has(.filter-sidebar.collapsed):has(.smax-info-col),
+  .smax-chat-grid:has(.filter-sidebar.collapsed):not(:has(.smax-info-col)) {
+    grid-template-columns: 56px 300px 1fr;
+  }
+  .smax-chat-grid:not(:has(.filter-sidebar.collapsed)),
+  .smax-chat-grid:not(:has(.filter-sidebar.collapsed)):has(.smax-info-col),
+  .smax-chat-grid:not(:has(.filter-sidebar.collapsed)):not(:has(.smax-info-col)) {
+    grid-template-columns: 240px 260px 1fr;
+  }
 }
 
 </style>

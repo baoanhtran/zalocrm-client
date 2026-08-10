@@ -889,9 +889,23 @@ watch(searchQuery, () => {
   }
   .smax-chat-grid > :first-child { display: none; }
 }
-/* < 1024: drop info panel too — chỉ còn conv list + thread */
+/* < 1024 (iPad dọc): bỏ luôn info panel — chỉ còn conv list + thread.
+   PHẢI liệt kê đủ các biến thể :has()/:not() như những mốc bên trên. Trước đây khối này
+   chỉ có `.smax-chat-grid` trần = specificity (0,1,0), nên bị rule của mốc 1200
+   `.smax-chat-grid:not(:has(.smax-info-col))` = (0,2,0) đè — specificity cao hơn thì
+   THẮNG bất kể nằm sau hay trước. Hậu quả: grid vẫn ăn template 3 cột `0 320px 1fr`
+   của mốc 1200 → cột hội thoại rộng 0px (mất hút) + cột 3 rỗng chiếm ~500px
+   → /chat trắng trơn trên iPad dọc. Lỗi có sẵn, chỉ lộ ra khi thôi ép #app 1100px.
+   (fix chat trắng trên iPad 2026-08-10) */
 @media (max-width: 1024px) {
-  .smax-chat-grid { grid-template-columns: 320px 1fr; }
+  .smax-chat-grid,
+  .smax-chat-grid:not(:has(.smax-info-col)),
+  .smax-chat-grid:has(.filter-rail.collapsed),
+  .smax-chat-grid:has(.filter-sidebar.collapsed),
+  .smax-chat-grid:has(.filter-rail.collapsed):not(:has(.smax-info-col)),
+  .smax-chat-grid:has(.filter-sidebar.collapsed):not(:has(.smax-info-col)) {
+    grid-template-columns: 320px 1fr;
+  }
   .smax-chat-grid > :first-child,
   .smax-chat-grid > :nth-child(4) { display: none; }
 }

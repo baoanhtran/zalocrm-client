@@ -566,8 +566,20 @@ function logout() {
 
 .smax-main {
   background: var(--smax-grey-100);
+  /* Lưới an toàn cho cuộn dọc. main.css khoá `html,body{overflow:hidden}`, nên trang nào
+     có nội dung cao hơn vùng main mà KHÔNG tự tạo khung cuộn thì phần thừa bị cắt cụt và
+     không vuốt tới được. Ca điển hình: /analytics ở iPad ngang 1024x768 tràn đáy 32px —
+     gốc view là <div> trần, file không hề có block <style>, nên chẳng ràng chiều cao
+     cũng chẳng có khung cuộn.
+     Ràng đúng chiều cao khả dụng rồi cho cuộn: trang nào vốn đã tự ràng đúng thì
+     scrollHeight == clientHeight → KHÔNG mọc thanh cuộn, layout y nguyên (đã đo 11 trang
+     /chat, /contacts, /reports, /settings, /media... không trang nào đổi).
+     (fix kẹt cuộn dọc trên iPad 2026-08-10) */
+  height: calc(100vh - var(--smax-topnav-h, 48px));
+  overflow-y: auto;
 }
-.smax-main :deep(.v-main__wrap) { min-height: calc(100vh - var(--smax-topnav-h)); }
+/* Bỏ rule cũ `.smax-main :deep(.v-main__wrap){min-height:...}`: bản Vuetify đang dùng
+   không render .v-main__wrap (đã kiểm querySelectorAll = 0) → rule đó là code chết. */
 
 /* Vuetify menus rendered from v-menu inherit theme automatically.
    Force light surface in case parent has legacy-dark applied. */

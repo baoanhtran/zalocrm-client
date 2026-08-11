@@ -11,6 +11,7 @@ import { authMiddleware } from '../auth/auth-middleware.js';
 import { requireGrant } from '../rbac/rbac-middleware.js';
 import { requireZaloAccess } from '../zalo/zalo-access-middleware.js';
 import { DISPLAYABLE_NICK_WHERE } from '../zalo/zalo-scope.js';
+import { UNREPLIED_WHERE } from './unreplied-filter.js';
 import { zaloPool } from '../zalo/zalo-pool.js';
 import { zaloRateLimiter } from '../zalo/zalo-rate-limiter.js';
 import { logger } from '../../shared/utils/logger.js';
@@ -166,7 +167,7 @@ export async function chatRoutes(app: FastifyInstance) {
 
     const [unread, unreplied, total, otherUnread] = await Promise.all([
       prisma.conversation.count({ where: { ...baseWhere, unreadCount: { gt: 0 } } }),
-      prisma.conversation.count({ where: { ...baseWhere, isReplied: false } }),
+      prisma.conversation.count({ where: { ...baseWhere, ...UNREPLIED_WHERE } }),
       prisma.conversation.count({ where: baseWhere }),
       prisma.conversation.count({ where: otherScopeWhere }),
     ]);

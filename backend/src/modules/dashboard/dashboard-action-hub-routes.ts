@@ -25,26 +25,13 @@ import { authMiddleware } from '../auth/auth-middleware.js';
 import { logger } from '../../shared/utils/logger.js';
 import { getOwnerScope } from '../rbac/owner-scope.js';
 import { userHasGrant } from '../rbac/permission-group-service.js';
+// FIX 2026-08-11: mốc ngày/tháng VN gom về shared/utils/vn-time (bản cũ dựng bằng
+// new Date(y,m,d) → lệch theo TZ container, "hôm nay" bắt đầu lúc 17:00 hôm trước).
+import { vnDayRange, vnMonthStart } from '../../shared/utils/vn-time.js';
+// FIX 2026-08-11: luật "chưa rep" dùng chung với màn Tin nhắn (bỏ điều kiện unreadCount).
+import { unrepliedKpiWhere, urgentConversationWhere } from '../chat/unreplied-filter.js';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
-
-function todayRangeVN() {
-  const now = new Date();
-  const vnOffset = 7 * 60 * 60 * 1000;
-  const vnNow = new Date(now.getTime() + vnOffset);
-  const todayVN = new Date(vnNow.getFullYear(), vnNow.getMonth(), vnNow.getDate());
-  const today = new Date(todayVN.getTime() - vnOffset);
-  const tomorrow = new Date(today.getTime() + 24 * 60 * 60 * 1000);
-  return { today, tomorrow };
-}
-
-function monthStartVN() {
-  const now = new Date();
-  const vnOffset = 7 * 60 * 60 * 1000;
-  const vnNow = new Date(now.getTime() + vnOffset);
-  const monthVN = new Date(vnNow.getFullYear(), vnNow.getMonth(), 1);
-  return new Date(monthVN.getTime() - vnOffset);
-}
 
 /**
  * Split count theo privacyMode của nick. Trả {public, private}.
@@ -137,26 +124,17 @@ export async function dashboardActionHubRoutes(app: FastifyInstance): Promise<vo
         });
       }
 
-      const { today, tomorrow } = todayRangeVN();
-      const monthStart = monthStartVN();
+      const { today, tomorrow } = vnDayRange();
+      const monthStart = vnMonthStart();
 
       // KPI split theo privacy của nick owner. countFn nhận zaloAccountIds
       // và trả count từ conversation/appointment theo các id đó.
       const [unrepliedSplit, todayApptSplit, dormantSplit, contactsCount, closedThisMonth] =
         await Promise.all([
-          // 📥 Chưa rep (conversation.isReplied=false, unreadCount>0)
+          // 📥 Chưa rep — luật chung với màn Tin nhắn (unreplied-filter.ts).
           // CRM rule 2026-05-29: chỉ user 1-1, KHÔNG nhóm Zalo.
           splitByPrivacy(viewer.orgId, targetUserId, async (zIds) =>
-            prisma.conversation.count({
-              where: {
-                orgId: viewer.orgId,
-                zaloAccountId: { in: zIds },
-                threadType: 'user',
-                deletedAt: null,
-                isReplied: false,
-                unreadCount: { gt: 0 },
-              },
-            }),
+            prisma.conversation.count({ where: unrepliedKpiWhere(viewer.orgId, zIds) }),
           ),
           // 📅 Hẹn hôm nay (Appointment.assignedUserId = target, hôm nay)
           splitByPrivacy(viewer.orgId, targetUserId, async (zIds) => {
@@ -242,24 +220,20 @@ export async function dashboardActionHubRoutes(app: FastifyInstance): Promise<vo
         prisma.contact.count({ where: { orgId: viewer.orgId, assignedUserId: targetUserId, createdAt: { gte: today, lt: tomorrow } } }),
       ]);
 
-      // "Cần rep gấp" (anh chốt 2026-06-11): tin chủ nick CHƯA ĐỌC (unreadCount>0,
-      // reset 0 khi chủ nick gửi). Sắp MỚI NHẤT trước (tin vừa tới = gấp nhất).
-      // 2026-06-11 (anh chốt): GỒM CẢ nick RIÊNG TƯ nhưng nội dung tin TUÂN THỦ privacy
-      // (redact server-side qua canSeeConversationContent — không lộ tin nick main cho
-      // người ngoài). Trước đây chỉ lấy nick public.
+      // "Cần rep gấp": KH nhắn cuối mà sale chưa trả lời — CÙNG luật với thẻ KPI
+      // "Chưa rep" ở trên (unreplied-filter.ts). Sắp MỚI NHẤT trước (tin vừa tới = gấp nhất).
+      // 2026-08-11 (anh chốt): bỏ điều kiện unreadCount>0 của bản 2026-06-11 — unreadCount
+      // về 0 ngay khi sale MỞ hội thoại (mark-read), nên ca "đã đọc mà quên rep" (đúng ca
+      // cần nhắc nhất) bị lọt lưới và danh sách trống trong khi thẻ KPI báo có việc.
+      // 2026-06-11 (anh chốt, GIỮ NGUYÊN): GỒM CẢ nick RIÊNG TƯ nhưng nội dung tin TUÂN THỦ
+      // privacy (redact server-side qua canSeeConversationContent — không lộ tin nick main
+      // cho người ngoài). Trước đây chỉ lấy nick public.
       const urgentNicks = await prisma.zaloAccount.findMany({
         where: { orgId: viewer.orgId, ownerUserId: targetUserId, archivedAt: null },
         select: { id: true },
       });
       const urgentConvs = await prisma.conversation.findMany({
-        where: {
-          orgId: viewer.orgId,
-          zaloAccountId: { in: urgentNicks.map((n) => n.id) },
-          threadType: 'user',
-          deletedAt: null,
-          unreadCount: { gt: 0 },
-          contactId: { not: null },
-        },
+        where: urgentConversationWhere(viewer.orgId, urgentNicks.map((n) => n.id)),
         select: {
           id: true,
           unreadCount: true,
@@ -531,7 +505,7 @@ export async function dashboardActionHubRoutes(app: FastifyInstance): Promise<vo
         visibleUserIds = scope.visibleUserIds;
       }
 
-      const { today, tomorrow } = todayRangeVN();
+      const { today, tomorrow } = vnDayRange();
       const weekAgo = new Date(today.getTime() - 7 * 86400000);
 
       // Per-user breakdown — bảng team table
@@ -561,17 +535,9 @@ export async function dashboardActionHubRoutes(app: FastifyInstance): Promise<vo
       const perUser = await Promise.all(
         usersInScope.map(async (u) => {
           const [unrepliedSplit, apptSplit, contactsCount, closedWeek] = await Promise.all([
-            // CRM rule 2026-05-29: chỉ user 1-1, bỏ nhóm.
+            // CRM rule 2026-05-29: chỉ user 1-1, bỏ nhóm. Luật "chưa rep" dùng chung.
             splitByPrivacy(viewer.orgId, u.id, async (zIds) =>
-              prisma.conversation.count({
-                where: {
-                  orgId: viewer.orgId,
-                  zaloAccountId: { in: zIds },
-                  threadType: 'user',
-                  isReplied: false,
-                  unreadCount: { gt: 0 },
-                },
-              }),
+              prisma.conversation.count({ where: unrepliedKpiWhere(viewer.orgId, zIds) }),
             ),
             splitByPrivacy(viewer.orgId, u.id, async () =>
               prisma.appointment.count({
@@ -708,8 +674,8 @@ export async function dashboardActionHubRoutes(app: FastifyInstance): Promise<vo
         });
       }
 
-      const { today, tomorrow } = todayRangeVN();
-      const monthStart = monthStartVN();
+      const { today, tomorrow } = vnDayRange();
+      const monthStart = vnMonthStart();
 
       // Nick health 50 nick
       const [nicksHealthy, nicksOverlimit, nicksBanned, nicksOffline, nicksPrivate, totalNicks] =

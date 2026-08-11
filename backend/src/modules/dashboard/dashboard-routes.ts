@@ -15,21 +15,14 @@ import { authMiddleware } from '../auth/auth-middleware.js';
 import { logger } from '../../shared/utils/logger.js';
 import { getZaloScope } from '../zalo/zalo-scope.js';
 import { getContactScope } from '../contacts/contact-scope.js';
+// FIX 2026-08-11: mốc ngày VN + luật "chưa rep" gom về nguồn dùng chung (bản cũ ở đây
+// lệch TZ và đòi thêm unreadCount>0 → lệch số với màn Tin nhắn).
+import { vnDayRange } from '../../shared/utils/vn-time.js';
+import { UNREPLIED_WHERE } from '../chat/unreplied-filter.js';
 
 type QueryParams = Record<string, string>;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-// Compute today's boundaries in UTC based on VN timezone (UTC+7)
-function todayRange() {
-  const now = new Date();
-  const vnOffset = 7 * 60 * 60 * 1000;
-  const vnNow = new Date(now.getTime() + vnOffset);
-  const todayVN = new Date(vnNow.getFullYear(), vnNow.getMonth(), vnNow.getDate());
-  const today = new Date(todayVN.getTime() - vnOffset);
-  const tomorrow = new Date(today.getTime() + 24 * 60 * 60 * 1000);
-  return { today, tomorrow };
-}
 
 function weekAgoDate(from: Date) {
   const d = new Date(from);
@@ -74,7 +67,7 @@ export async function dashboardRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/v1/dashboard/kpi', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const { orgId } = request.user!;
-      const { today, tomorrow } = todayRange();
+      const { today, tomorrow } = vnDayRange();
       const weekAgo = weekAgoDate(today);
       const { convFilter, contactFilter, apptFilter } = await buildDashboardScope(request);
 
@@ -83,7 +76,7 @@ export async function dashboardRoutes(app: FastifyInstance): Promise<void> {
           prisma.message.count({
             where: { conversation: { orgId, ...convFilter }, sentAt: { gte: today, lt: tomorrow } },
           }),
-          prisma.conversation.count({ where: { orgId, ...convFilter, deletedAt: null, isReplied: false, unreadCount: { gt: 0 } } }),
+          prisma.conversation.count({ where: { orgId, ...convFilter, deletedAt: null, ...UNREPLIED_WHERE } }),
           prisma.conversation.count({ where: { orgId, ...convFilter, deletedAt: null, unreadCount: { gt: 0 } } }),
           prisma.appointment.count({
             where: { orgId, ...apptFilter, appointmentDate: { gte: today, lt: tomorrow }, status: 'scheduled' },

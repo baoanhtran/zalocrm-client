@@ -1,7 +1,9 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <!-- Copyright (C) 2026 Nguyễn Tiến Lộc -->
 <template>
-  <div class="mobile-chat" style="height: calc(100vh - 120px);">
+  <!-- dvh = vùng nhìn thấy thật; xem chú thích ở hs-crm-theme.css. Điện thoại là nơi
+       thanh URL động rõ nhất nên chỗ này ăn lợi nhiều nhất. -->
+  <div class="mobile-chat" style="height: calc(100vh - 120px); height: calc(100dvh - 120px);">
     <!-- Conversation list (shown when no conversation selected) -->
     <div v-if="!selectedConvId" style="height: 100%;">
       <ConversationList

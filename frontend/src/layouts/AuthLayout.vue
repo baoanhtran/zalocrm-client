@@ -4,7 +4,7 @@
   <!-- 2026-06-09 (anh chốt): login 2 cột — banner thương hiệu HS Holding trái + form phải.
        Bỏ container 450px cũ, để LoginView tự dựng 2 cột full màn. -->
   <v-app class="auth-shell">
-    <v-main class="d-flex align-center justify-center" style="min-height: 100vh;">
+    <v-main class="d-flex align-center justify-center" style="min-height: 100vh; min-height: 100dvh;">
       <slot />
     </v-main>
   </v-app>

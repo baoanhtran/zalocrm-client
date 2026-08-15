@@ -157,6 +157,7 @@ async function onSend() {
   background: #fff;
   width: min(540px, calc(100vw - 32px));
   max-height: calc(100vh - 64px);
+  max-height: calc(100dvh - 64px);  /* dvh: xem chú thích ở hs-crm-theme.css */
   border-radius: 14px;
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.25);
   display: flex;

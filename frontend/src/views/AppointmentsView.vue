@@ -479,6 +479,7 @@ onBeforeUnmount(() => {
 .apt-page {
   display: flex; flex-direction: column;
   height: calc(100vh - var(--smax-topnav-h, 52px));
+  height: calc(100dvh - var(--smax-topnav-h, 52px));  /* dvh: xem chú thích ở hs-crm-theme.css */
   width: 100%;
   background: var(--at-canvas);
   overflow: hidden;

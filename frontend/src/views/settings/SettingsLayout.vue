@@ -163,6 +163,7 @@ onMounted(() => {
   display: grid;
   grid-template-columns: 260px 1fr;
   height: calc(100vh - 56px);
+  height: calc(100dvh - 56px);  /* dvh: xem chú thích ở hs-crm-theme.css */
   background: #FAFAFC;
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-size: 13.5px;

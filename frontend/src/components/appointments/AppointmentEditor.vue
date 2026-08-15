@@ -1612,6 +1612,8 @@ if (typeof window !== 'undefined') {
   .editor {
     width: 100%; max-width: 100%; max-height: 100vh;
     height: 100vh; border-radius: 0;
+    /* dvh: xem chú thích ở hs-crm-theme.css */
+    max-height: 100dvh; height: 100dvh;
   }
   .editor-body { padding: var(--at-s-sm) var(--at-s-md); }
   .editor-foot { padding: var(--at-s-sm) var(--at-s-md); flex-direction: column-reverse; gap: var(--at-s-xs); }

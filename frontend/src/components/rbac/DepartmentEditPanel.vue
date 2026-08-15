@@ -331,6 +331,7 @@ function avatarColor(name: string): string {
   width: 460px;
   max-width: 92vw;
   height: 100vh;
+  height: 100dvh;  /* dvh: xem chú thích ở hs-crm-theme.css */
   background: white;
   display: flex;
   flex-direction: column;

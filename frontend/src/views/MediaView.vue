@@ -528,6 +528,7 @@ onMounted(() => { reload(); loadFolders(); loadUploaders(); });
      height:100% không phân giải → flex chain hỏng, cột 3 detail không cuộn được, accordion
      mở ra tràn khỏi màn (anh báo 2026-06-16). Cố định height → .p-body cuộn đúng. */
   display:flex; flex-direction:column; height:calc(100vh - var(--smax-topnav-h, 48px)); min-height:0; overflow:hidden;
+  height:calc(100dvh - var(--smax-topnav-h, 48px));  /* dvh: xem chú thích ở hs-crm-theme.css */
   background:var(--canvas); color:var(--body); font-size:14px;
 }
 .m-top { display:flex; align-items:center; justify-content:space-between; padding:16px 24px 12px; border-bottom:1px solid var(--hairline); }

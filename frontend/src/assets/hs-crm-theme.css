@@ -275,7 +275,14 @@ input, select, textarea { font-family: inherit; }
 /* ╔══ PART 5–15 · APP CHROME + TẤT CẢ MÀN ══╗ */
 /* ===== App shell ===== */
   html, body { height: 100%; }
-  #app { display: flex; flex-direction: column; height: 100vh; }
+  /* 100dvh = vùng NHÌN THẤY THẬT. Chrome Android tính 100vh theo lúc thanh URL đã thu
+     lại, nên khi thanh tab + URL + dấu trang đang hiện thì khung app cao hơn màn cả
+     ~200px. Phần thò xuống đó không cuộn tới được vì html/body đang overflow:hidden;
+     chỉ cần trình duyệt tự cuộn một nhát (focus ô nhập, khôi phục vị trí cuộn khi F5)
+     là toàn bộ nội dung trôi lên, navbar sticky ở lại, và người dùng KHÔNG kéo về được.
+     Giữ dòng 100vh phía trên làm dự phòng cho trình duyệt chưa hỗ trợ dvh.
+     (báo cáo từ khách dùng Galaxy Tab A9 + Chrome, 2026-08-15) */
+  #app { display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
   /* min-width:1100 CHỈ ép khi viewport đã thực sự ≥1100px — tức là nó không bao giờ
      tạo ra tràn, chỉ giữ khung cho desktop.
      KHÔNG hạ ngưỡng này xuống nữa. Lịch sử:

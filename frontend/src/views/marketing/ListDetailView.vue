@@ -1409,6 +1409,7 @@ function nickAvatarStyle(name: string): Record<string, string> {
   border-radius: var(--r-md); overflow: auto;
   /* 2026-06-24: nới cao để xem nhiều khách hơn; header sticky pin top khi cuộn */
   max-height: calc(100vh - 250px);
+  max-height: calc(100dvh - 250px);  /* dvh: xem chú thích ở hs-crm-theme.css */
 }
 .entries-table { font-size: 12px; min-width: 1500px; }
 

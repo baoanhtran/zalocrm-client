@@ -611,6 +611,7 @@ async function copyPhone() {
   box-shadow: -8px 0 24px rgba(0, 0, 0, 0.12);
   animation: ldp-slide 250ms ease;
   height: 100vh; overflow: hidden;
+  height: 100dvh;  /* dvh: xem chú thích ở hs-crm-theme.css */
 }
 @keyframes ldp-slide {
   from { transform: translateX(40px); opacity: 0; }

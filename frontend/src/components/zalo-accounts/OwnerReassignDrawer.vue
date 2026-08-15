@@ -239,6 +239,7 @@ function avatarColor(name: string): string {
   background: white;
   display: flex; flex-direction: column;
   height: 100vh;
+  height: 100dvh;  /* dvh: xem chú thích ở hs-crm-theme.css */
   box-shadow: -8px 0 32px rgba(15, 23, 42, 0.15);
   font-family: 'Inter', -apple-system, 'Segoe UI', sans-serif;
 }

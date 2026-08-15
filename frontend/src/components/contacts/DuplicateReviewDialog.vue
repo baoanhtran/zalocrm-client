@@ -882,7 +882,8 @@ const ContactCard = defineComponent({
   .action-buttons { flex-direction: row; flex-wrap: wrap; }
 }
 @media (max-width: 600px) {
-  .dup-dialog { max-height: 100vh; height: 100vh; border-radius: 0; }
+  /* dvh: xem chú thích ở hs-crm-theme.css */
+  .dup-dialog { max-height: 100vh; height: 100vh; max-height: 100dvh; height: 100dvh; border-radius: 0; }
   .compare-grid { grid-template-columns: 1fr; padding: 9px; }
   .dup-header { padding: 11px 13px; }
   .dup-filters { padding: 8px 13px; }

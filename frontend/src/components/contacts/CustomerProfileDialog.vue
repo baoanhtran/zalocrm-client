@@ -933,6 +933,7 @@ async function copyAttr(code: string) {
 .cpd-modal {
   position: relative; width: 960px; max-width: calc(100vw - 32px);
   max-height: calc(100vh - 64px); background: #fff; border-radius: 12px;
+  max-height: calc(100dvh - 64px);  /* dvh: xem chú thích ở hs-crm-theme.css */
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
   display: flex; flex-direction: column; overflow: hidden;
   font-family: -apple-system, "Segoe UI", Roboto, sans-serif;

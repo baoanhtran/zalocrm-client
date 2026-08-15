@@ -1582,6 +1582,7 @@ watch(
   display: flex;
   flex-direction: column;
   height: calc(100vh - var(--smax-topnav-h, 52px));
+  height: calc(100dvh - var(--smax-topnav-h, 52px));  /* dvh: xem chú thích ở hs-crm-theme.css */
   overflow: hidden;
 }
 .smax-contacts-page > .page-header,

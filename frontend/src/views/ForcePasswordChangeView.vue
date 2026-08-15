@@ -194,6 +194,7 @@ async function handleSubmit() {
 /* ── Atlas v2 / HS Holding identity ──────────────────────────────────────── */
 .fpc-page {
   min-height: 100vh;
+  min-height: 100dvh;  /* dvh: xem chú thích ở hs-crm-theme.css */
   display: flex;
   align-items: center;
   justify-content: center;

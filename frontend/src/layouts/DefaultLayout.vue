@@ -576,6 +576,7 @@ function logout() {
      /chat, /contacts, /reports, /settings, /media... không trang nào đổi).
      (fix kẹt cuộn dọc trên iPad 2026-08-10) */
   height: calc(100vh - var(--smax-topnav-h, 48px));
+  height: calc(100dvh - var(--smax-topnav-h, 48px));  /* xem chú thích dvh ở hs-crm-theme.css */
   overflow-y: auto;
 }
 /* Bỏ rule cũ `.smax-main :deep(.v-main__wrap){min-height:...}`: bản Vuetify đang dùng

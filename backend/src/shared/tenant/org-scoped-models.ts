@@ -29,4 +29,8 @@ export const ORG_SCOPED_MODELS: ReadonlySet<string> = new Set([
   'LeadPoolConfig', 'LeadPoolBonusQuota', 'FacebookPageAccount',
   'FacebookLeadgenForm', 'WebhookLog', 'MetaCampaignCache', 'NotifyDedupState',
   'ZaloOaAppConfig', 'ZaloOaConnection', 'ZaloFormMapping', 'ZaloLeadEvent',
+  // Chia lead tự động 2026-08-19 — cả 3 đều có orgId. Không khai ở đây thì
+  // checkTenantGuard() bỏ qua im lặng (tenant-guard.ts:30) và cron chạy sai org
+  // sẽ không ai chặn.
+  'LeadDistributionConfig', 'LeadDistributionMember', 'LeadAssignment',
 ]);

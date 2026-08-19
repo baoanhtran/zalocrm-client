@@ -44,6 +44,7 @@ import { deviceRoutes } from './modules/devices/device-routes.js';
 import { configRoutes } from './modules/config/config-routes.js';
 import { mediaRoutes } from './modules/media/media-routes.js';
 import { contactRoutes } from './modules/contacts/contact-routes.js';
+import { leadDistributionRoutes } from './modules/lead-distribution/lead-distribution-routes.js';
 import { statusRoutes } from './modules/contacts/status-routes.js';
 import { contactSubResourceRoutes } from './modules/contacts/contact-sub-resource-routes.js';
 import { cockpitRoutes } from './modules/contacts/cockpit-routes.js';
@@ -270,6 +271,7 @@ async function bootstrap() {
   await app.register(configRoutes);
   await app.register(mediaRoutes);
   await app.register(contactRoutes);
+  await app.register(leadDistributionRoutes);
   await app.register(statusRoutes);
   await app.register(contactSubResourceRoutes);
   await app.register(cockpitRoutes);
@@ -386,6 +388,11 @@ async function bootstrap() {
     // E1 Quét group (🟢 Community) — BullMQ worker xử lý group-scan job.
     if (config.nodeEnv !== 'test') startGroupScanWorker();
     startInteractionCron(); // daily silent_30d detection (02:00 VN)
+
+    // Chia lead tự động 07:00 VN. Cron tự bỏ qua org có enabled=false, nên bật
+    // ở đây là an toàn: không org nào bị chia lead tới khi admin bật trong Cài đặt.
+    const { startLeadDistributionCron } = await import('./modules/lead-distribution/lead-distribution-cron.js');
+    startLeadDistributionCron();
     // Phase 8 — Engagement heatmap classification (02:30 VN daily)
     const { startEngagementCron } = await import('./modules/engagement/engagement-cron.js');
     startEngagementCron();

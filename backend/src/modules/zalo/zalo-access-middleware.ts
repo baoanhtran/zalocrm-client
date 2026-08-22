@@ -42,10 +42,35 @@ export async function checkZaloAccess(args: {
   const access = await prisma.zaloAccountAccess.findFirst({
     where: { zaloAccountId, userId },
   });
-  if (!access) return 'no_grant';
+  if (access) {
+    const userLevel = hierarchy[access.permission as Permission] ?? 0;
+    if (userLevel >= hierarchy[minPermission]) return 'ok';
+  }
 
-  const userLevel = hierarchy[access.permission as Permission] ?? 0;
-  return userLevel >= hierarchy[minPermission] ? 'ok' : 'insufficient';
+  // ───────────────────────────────────────────────────────────────────────────
+  // 2026-08-22 — HỆ PHÂN QUYỀN THỨ BA.
+  // Hàm này chỉ tra bảng ZaloAccountAccess, KHÔNG biết gì về cascade phòng ban lẫn
+  // grant view_all. Hậu quả: trưởng phòng/CEO THẤY hội thoại của nick cấp dưới trong
+  // danh sách (danh sách lọc bằng getZaloScope) nhưng bấm vào thì 403 "Không có quyền
+  // truy cập tài khoản Zalo này" — vì GET /conversations/:id/messages gác bằng hàm này.
+  // Khách BMA báo 2026-08-22 ở tài khoản CEO; trưởng phòng cũng dính từ trước.
+  //
+  // Sửa: hỏi getZaloScope — cùng nguồn sự thật với danh sách, hết lệch pha.
+  //   read → displayableIds (gồm nick đã xóa-có-uid, đọc-only)
+  //   chat → accessibleIds  (nick còn sống trong scope — chú thích gốc của trường này
+  //                          đã ghi rõ "dùng cho picker/gửi")
+  // CỐ Ý loại 'admin': xóa nick / đăng nhập lại / đổi proxy vẫn chỉ dành cho chủ nick +
+  // chủ tổ chức, đúng như requireAccountManagement đã chốt ("Trưởng phòng KHÔNG được
+  // delete/login/proxy nick cấp dưới"). Đặt cuối cùng để owner/ACL không phải trả thêm query.
+  // ───────────────────────────────────────────────────────────────────────────
+  if (minPermission !== 'admin') {
+    const { getZaloScope } = await import('./zalo-scope.js');
+    const scope = await getZaloScope(userId, orgId, role);
+    const pool = minPermission === 'read' ? scope.displayableIds : scope.accessibleIds;
+    if (pool.includes(zaloAccountId)) return 'ok';
+  }
+
+  return access ? 'insufficient' : 'no_grant';
 }
 
 // Tiện ích boolean cho caller chỉ cần đúng/sai (vd cầu Telegram khi sale gửi từ Telegram).

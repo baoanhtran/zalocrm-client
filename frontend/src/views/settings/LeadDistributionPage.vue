@@ -310,7 +310,7 @@ async function checkBackfill() {
   try {
     const { data } = await api.post('/lead-distribution/backfill?dryRun=true');
     backfillCount.value = data.count;
-    if (data.count === 0) toast.info('Không có khách cũ nào cần nạp');
+    if (data.count === 0) toast.push('Không có khách cũ nào cần nạp');
   } catch {
     toast.error('Không đếm được');
   } finally {

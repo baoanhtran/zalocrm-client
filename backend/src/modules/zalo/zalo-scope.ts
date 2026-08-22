@@ -278,6 +278,44 @@ export async function requireAccountVisible(
 }
 
 /**
+ * 2026-08-22 — gate cấp "CHAT" trên `:id` của ZaloAccount: thao tác thường-ngày ĐẨY LÊN
+ * Zalo qua nick người khác (vd gán thẻ cho hội thoại), khác với:
+ *   - requireAccountVisible     → chỉ ĐỌC (displayableIds, gồm nick đã xóa đọc-only)
+ *   - requireAccountManagement  → QUẢN TRỊ nick (xóa/đăng nhập lại/đổi proxy) — chỉ chủ nick
+ *
+ * Dùng `accessibleIds` (nick CÒN SỐNG trong scope) nên nick đã xóa tự động rớt. getZaloScope
+ * đã bao trọn cả 4 đường: chủ nick, ACL ZaloAccountAccess, cascade phòng ban, grant view_all.
+ */
+export async function requireAccountChat(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  accountId: string,
+): Promise<{ id: string; ownerUserId: string | null; orgId: string } | null> {
+  const user = (request as any).user;
+  if (!user) {
+    reply.status(401).send({ error: 'Unauthorized' });
+    return null;
+  }
+  const account = await prisma.zaloAccount.findFirst({
+    where: { id: accountId, orgId: user.orgId },
+    select: { id: true, ownerUserId: true, orgId: true },
+  });
+  if (!account) {
+    reply.status(404).send({ error: 'Account not found' });
+    return null;
+  }
+  const scope = await getZaloScope(user.id, user.orgId, user.role);
+  if (!scope.isOrgAdmin && !scope.accessibleIds.includes(accountId)) {
+    reply.status(403).send({
+      error: 'Bạn không có quyền thao tác trên nick này',
+      code: 'not_in_scope',
+    });
+    return null;
+  }
+  return account;
+}
+
+/**
  * T7b (YC2 2026-06-20) — lý do CHẶN GỬI qua 1 nick, dùng chung mọi cửa gửi (chat/attachment/
  * media/public-api/automation) để thông điệp + mã lỗi nhất quán. Thứ tự ưu tiên: nick đã XÓA
  * (archivedAt) trước → chưa kết nối sau. null = gửi được.

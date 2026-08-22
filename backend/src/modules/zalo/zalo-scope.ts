@@ -5,15 +5,32 @@
  *
  * Quy tắc (anh chốt 2026-05-22):
  *   - role='owner' (Chủ tổ chức) → tất cả nick trong org
+ *   - Nhóm quyền có grant conversation.view_all HOẶC zalo_account.view_all → tất cả nick (2026-08-22)
  *   - Trưởng phòng / Phó phòng của dept X → nick của user thuộc dept X + tất cả dept con
  *     (cascade theo dept tree materialized path)
  *   - Member thường → chỉ nick mà user là ownerUserId HOẶC được grant ZaloAccountAccess
  *
  * Output: array of zaloAccount IDs user được phép xem.
  * Caller dùng `where: { id: { in: ids }, orgId: ... }` để filter list.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * 2026-08-22 — HÀM NÀY TRƯỚC ĐÂY KHÔNG ĐỌC NHÓM QUYỀN.
+ * Nó chỉ nhìn legacy role + deptRole, nên 2 ô tick `conversation.view_all` và
+ * `zalo_account.view_all` trong ma trận phân quyền là ô CHẾT. Khách BMA báo 2026-08-22:
+ * nhóm "CEO" đã tick cả 2 ô đó mà mở màn Tin nhắn ra vẫn chỉ thấy nick của chính mình.
+ *
+ * Đọc `conversation.view_all` vì màn Tin nhắn scope theo NICK; OR thêm `zalo_account.view_all`
+ * để ai tick ô nào cũng ăn.
+ *
+ * CỐ Ý KHÔNG set `isOrgAdmin=true` cho trường hợp grant: cờ đó mang nghĩa "quản trị org"
+ * (bulk action, edit any). Thay vào đó trả về ĐỦ danh sách id — mọi caller đang viết
+ * `isOrgAdmin ? bỏ-lọc : lọc theo accessibleIds` nên vẫn ra đúng kết quả, mà không ai
+ * bị nâng nhầm lên quyền quản trị.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../shared/database/prisma-client.js';
+import { userHasGrant } from '../rbac/permission-group-service.js';
 import type { FastifyRequest, FastifyReply } from 'fastify';
 
 export interface ZaloScope {
@@ -24,8 +41,17 @@ export interface ZaloScope {
    * Loại nick-ma (zaloUid=null). Dùng cho list/detail chat (nick xóa vẫn hiện lịch sử).
    */
   displayableIds: string[];
-  /** True nếu user có quyền manage org-wide (bulk actions, edit any) */
+  /**
+   * True nếu user có quyền MANAGE org-wide (bulk actions, edit any) — legacy role owner/admin.
+   * KHÔNG bật cờ này cho người chỉ có grant view_all: họ được XEM hết, không được SỬA hết.
+   */
   isOrgAdmin: boolean;
+  /**
+   * True nếu user được XEM mọi nick trong org: legacy role owner/admin HOẶC grant
+   * conversation.view_all / zalo_account.view_all. Khi true thì accessibleIds/displayableIds
+   * đã chứa đủ mọi nick nên caller không cần xử lý riêng.
+   */
+  canViewAll: boolean;
   /** Set của account IDs mà user là owner (owns the nick) — dùng để gate Action buttons */
   ownedIds: Set<string>;
 }
@@ -59,10 +85,17 @@ export const ACTIVE_SEND_NICK_WHERE: Prisma.ZaloAccountWhereInput = {
 export async function getZaloScope(userId: string, orgId: string, legacyRole: string): Promise<ZaloScope> {
   const isOrgAdmin = legacyRole === 'owner' || legacyRole === 'admin';
 
-  // Org admin → tất cả accounts (trừ nick đã xóa mềm).
+  // 2026-08-22: grant view_all cũng được xem toàn org (CEO/trợ lý không thuộc phòng nào).
+  // catch → false: hỏng bảng quyền thì thu hẹp phạm vi, KHÔNG mở rộng.
+  const canViewAll =
+    isOrgAdmin ||
+    (await userHasGrant(userId, 'conversation', 'view_all').catch(() => false)) ||
+    (await userHasGrant(userId, 'zalo_account', 'view_all').catch(() => false));
+
+  // Xem-tất-cả → tất cả accounts (trừ nick đã xóa mềm).
   // 2026-06-10 FIX: lọc archivedAt → nick đã xóa KHÔNG còn trong accessibleIds, nên
   // mọi picker/màn hình dùng getZaloScope tự động hết pick được nick đã xóa.
-  if (isOrgAdmin) {
+  if (canViewAll) {
     // T6 (YC2): lấy CẢ nick xóa-có-uid để XEM; accessibleIds (gửi) chỉ nick còn sống.
     const all = await prisma.zaloAccount.findMany({
       where: { orgId, ...DISPLAYABLE_NICK_WHERE },
@@ -71,7 +104,9 @@ export async function getZaloScope(userId: string, orgId: string, legacyRole: st
     return {
       displayableIds: all.map((a) => a.id),
       accessibleIds: all.filter((a) => a.archivedAt === null).map((a) => a.id),
-      isOrgAdmin: true,
+      // isOrgAdmin GIỮ NGUYÊN nghĩa cũ: chỉ legacy role mới là quản trị org.
+      isOrgAdmin,
+      canViewAll: true,
       ownedIds: new Set(all.filter((a) => a.ownerUserId === userId && a.archivedAt === null).map((a) => a.id)),
     };
   }
@@ -139,6 +174,7 @@ export async function getZaloScope(userId: string, orgId: string, legacyRole: st
     displayableIds: Array.from(displayableSet),
     accessibleIds: Array.from(accessibleSet),
     isOrgAdmin: false,
+    canViewAll: false,
     // ownedIds = nick mình sở hữu CÒN SỐNG (gate action buttons) — loại nick đã xóa.
     ownedIds: new Set(ownedAccounts.filter((a) => a.ownerUserId === userId && a.archivedAt === null).map((a) => a.id)),
   };
@@ -234,6 +270,44 @@ export async function requireAccountVisible(
   if (!scope.isOrgAdmin && !scope.displayableIds.includes(accountId)) {
     reply.status(403).send({
       error: 'Bạn không có quyền xem nick này',
+      code: 'not_in_scope',
+    });
+    return null;
+  }
+  return account;
+}
+
+/**
+ * 2026-08-22 — gate cấp "CHAT" trên `:id` của ZaloAccount: thao tác thường-ngày ĐẨY LÊN
+ * Zalo qua nick người khác (vd gán thẻ cho hội thoại), khác với:
+ *   - requireAccountVisible     → chỉ ĐỌC (displayableIds, gồm nick đã xóa đọc-only)
+ *   - requireAccountManagement  → QUẢN TRỊ nick (xóa/đăng nhập lại/đổi proxy) — chỉ chủ nick
+ *
+ * Dùng `accessibleIds` (nick CÒN SỐNG trong scope) nên nick đã xóa tự động rớt. getZaloScope
+ * đã bao trọn cả 4 đường: chủ nick, ACL ZaloAccountAccess, cascade phòng ban, grant view_all.
+ */
+export async function requireAccountChat(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  accountId: string,
+): Promise<{ id: string; ownerUserId: string | null; orgId: string } | null> {
+  const user = (request as any).user;
+  if (!user) {
+    reply.status(401).send({ error: 'Unauthorized' });
+    return null;
+  }
+  const account = await prisma.zaloAccount.findFirst({
+    where: { id: accountId, orgId: user.orgId },
+    select: { id: true, ownerUserId: true, orgId: true },
+  });
+  if (!account) {
+    reply.status(404).send({ error: 'Account not found' });
+    return null;
+  }
+  const scope = await getZaloScope(user.id, user.orgId, user.role);
+  if (!scope.isOrgAdmin && !scope.accessibleIds.includes(accountId)) {
+    reply.status(403).send({
+      error: 'Bạn không có quyền thao tác trên nick này',
       code: 'not_in_scope',
     });
     return null;

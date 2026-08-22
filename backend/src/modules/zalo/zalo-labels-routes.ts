@@ -21,7 +21,7 @@ import { authMiddleware } from '../auth/auth-middleware.js';
 import { logger } from '../../shared/utils/logger.js';
 import { zaloPool } from './zalo-pool.js';
 import { logActivity } from '../activity/activity-logger.js';
-import { getZaloScope, requireAccountManagement, requireAccountVisible } from './zalo-scope.js';
+import { getZaloScope, requireAccountManagement, requireAccountVisible, requireAccountChat } from './zalo-scope.js';
 
 type LabelDataFromSdk = {
   id: number | string;
@@ -637,8 +637,10 @@ export async function zaloLabelsRoutes(app: FastifyInstance): Promise<void> {
   //    Settings page "Đồng bộ ngay" + manual user click.
   app.post('/api/v1/zalo-accounts/:id/labels/sync', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
     try {
-      // Phase Zalo Account Mutation Gate 2026-05-27: gate write trên nick
-      const account = await requireAccountManagement(request, reply, request.params.id);
+      // 2026-08-22: HẠ từ requireAccountManagement xuống requireAccountVisible. Sync chỉ
+      // KÉO nhãn từ Zalo về DB mình — không đổi gì trên tài khoản Zalo. Gắn nhãn "write"
+      // vì có ghi DB là quá tay: trưởng phòng/CEO xem nick cấp dưới bị chặn oan.
+      const account = await requireAccountVisible(request, reply, request.params.id);
       if (!account) return reply;
       const result = await syncLabelsForAccount(account.id, account.orgId);
       return result;
@@ -653,8 +655,11 @@ export async function zaloLabelsRoutes(app: FastifyInstance): Promise<void> {
   //    Frontend trigger khi switch conversation / load tab. No-op nếu vừa sync gần đây.
   app.post('/api/v1/zalo-accounts/:id/labels/touch', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
     try {
-      // Phase Zalo Account Mutation Gate 2026-05-27: gate (touch là write side-effect)
-      const account = await requireAccountManagement(request, reply, request.params.id);
+      // 2026-08-22: HẠ xuống requireAccountVisible. Frontend GỌI TỰ ĐỘNG route này mỗi lần
+      // đổi hội thoại (MessageThread.vue), nên gate quản-trị ở đây làm CEO/trưởng phòng vừa
+      // mở tin nhắn của nick cấp dưới là ăn ngay toast "Bạn không có quyền thao tác trên nick
+      // này" — dù không bấm gì. Bản thân touch chỉ kéo nhãn về DB, không đụng tài khoản Zalo.
+      const account = await requireAccountVisible(request, reply, request.params.id);
       if (!account) return reply;
       const result = await syncLabelsIfStale(account.id, account.orgId);
       if (!result) return { ok: true, skipped: true, reason: 'cooldown' };
@@ -676,8 +681,11 @@ export async function zaloLabelsRoutes(app: FastifyInstance): Promise<void> {
     Body: { threadId: string; labelId: number | null };
   }>, reply: FastifyReply) => {
     try {
-      // Phase Zalo Account Mutation Gate 2026-05-27: gate write (label thread)
-      const account = await requireAccountManagement(request, reply, request.params.id);
+      // 2026-08-22: HẠ xuống requireAccountChat (anh chốt: gán thẻ là việc CRM hàng ngày,
+      // cùng hạng với trả lời tin nhắn). Đây là ĐẨY THẬT lên Zalo nên dùng gate cấp chat
+      // (accessibleIds — nick còn sống trong scope), KHÔNG dùng gate đọc.
+      // Riêng PATCH labels/:labelId (đổi tên thẻ của nick) vẫn giữ requireAccountManagement.
+      const account = await requireAccountChat(request, reply, request.params.id);
       if (!account) return reply;
 
       const threadId = (request.body?.threadId || '').trim();

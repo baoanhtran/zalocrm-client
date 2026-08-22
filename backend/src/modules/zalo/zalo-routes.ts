@@ -266,6 +266,17 @@ export async function zaloRoutes(app: FastifyInstance): Promise<void> {
       });
       request.log?.info?.(`[zalo:${id}] soft-deleted by ${user.id} (archivedAt set, GIỮ uid+session để revive)`);
 
+      // 2026-08-22: nick chết thì quyền xem KH đến-từ-nick-đó phải chết theo, nếu không chủ
+      // nick giữ quyền xem KH vĩnh viễn (xem revokeStaleContactAccess). Best-effort, không
+      // chặn phản hồi 204.
+      if (gate.ownerUserId) {
+        const { revokeStaleContactAccess } = await import('../contacts/contact-scope.js');
+        const revoked = await revokeStaleContactAccess({ orgId: gate.orgId, userId: gate.ownerUserId });
+        if (revoked > 0) {
+          request.log?.info?.(`[zalo:${id}] thu hồi ${revoked} ContactAccess mồ côi của chủ nick ${gate.ownerUserId}`);
+        }
+      }
+
       return reply.status(204).send();
     },
   );

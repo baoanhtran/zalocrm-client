@@ -7,6 +7,7 @@
  *
  * Quy tắc (anh chốt 2026-05-27):
  *   - role='owner'/'admin' (Chủ tổ chức / quản trị) → MỌI Contact trong org (full view, không scope)
+ *   - Nhóm quyền có grant contact.view_all → MỌI Contact trong org (2026-08-22, xem dưới)
  *   - Trưởng phòng / Phó phòng của dept X → MỌI Contact có ContactAccess.userId thuộc dept X
  *     + tất cả dept con (cascade theo dept tree materialized path)
  *   - Member thường (Sale) → CHỈ Contact mà user là primary owner HOẶC collaborator
@@ -14,13 +15,33 @@
  *     (hook applyFriendAggregate / handshake).
  *
  * Output: `accessibleContactIds` để inject vào Prisma `where: { id: { in: ... } }`.
- * Lưu ý: org-admin trả `isOrgAdmin=true` + `accessibleContactIds=null` (caller bỏ filter).
+ * Lưu ý: xem-tất-cả trả `canViewAll=true` + `accessibleContactIds=null` (caller bỏ filter).
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * 2026-08-22 — TÁCH `isOrgAdmin` KHỎI `canViewAll`.
+ * Trước đây hàm này CHỈ đọc legacy role, nên ô tick `contact.view_all` trong ma trận
+ * phân quyền vô tác dụng: nhóm "CEO" tick view_all vẫn chỉ thấy KH của chính mình
+ * (khách BMA báo 2026-08-22 — CEO mở màn Khách hàng ra thấy 10/1953 KH).
+ *
+ * `isOrgAdmin` = quyền QUẢN TRỊ org (legacy role owner/admin) — đừng dùng để lọc đọc.
+ * `canViewAll` = quyền XEM toàn org (legacy role HOẶC grant contact.view_all).
+ * Giữ riêng 2 cờ để grant "xem tất cả" không vô tình cấp luôn quyền sửa/xoá org-wide.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 import { prisma } from '../../shared/database/prisma-client.js';
+import { userHasGrant } from '../rbac/permission-group-service.js';
 
 export interface ContactScope {
-  /** True nếu user có quyền view toàn org (skip filter) */
+  /**
+   * True nếu user là QUẢN TRỊ org (legacy role owner/admin). Dùng cho gate sửa/xoá
+   * org-wide và badge "admin". KHÔNG dùng để quyết định phạm vi ĐỌC — dùng `canViewAll`.
+   */
   isOrgAdmin: boolean;
+  /**
+   * True nếu user được XEM toàn org: legacy role owner/admin HOẶC grant `contact.view_all`.
+   * Khi true thì `accessibleContactIds = null` (caller bỏ filter).
+   */
+  canViewAll: boolean;
   /** Set userIds mà KH gán cho họ user này được thấy (chính mình + dept-subtree members nếu leader) */
   visibleUserIds: Set<string>;
   /**
@@ -47,6 +68,20 @@ export async function getContactScope(
   if (isOrgAdmin) {
     return {
       isOrgAdmin: true,
+      canViewAll: true,
+      visibleUserIds: new Set<string>(),
+      accessibleContactIds: null,
+      primaryContactIds: new Set<string>(),
+    };
+  }
+
+  // 2026-08-22: grant contact.view_all → xem toàn org (CEO/Marketing không phải leader).
+  // catch → false: hỏng bảng quyền thì thu hẹp phạm vi, KHÔNG mở rộng.
+  const hasViewAll = await userHasGrant(userId, 'contact', 'view_all').catch(() => false);
+  if (hasViewAll) {
+    return {
+      isOrgAdmin: false,
+      canViewAll: true,
       visibleUserIds: new Set<string>(),
       accessibleContactIds: null,
       primaryContactIds: new Set<string>(),
@@ -102,10 +137,47 @@ export async function getContactScope(
 
   return {
     isOrgAdmin: false,
+    canViewAll: false,
     visibleUserIds,
     accessibleContactIds,
     primaryContactIds,
   };
+}
+
+/**
+ * 2026-08-22 — thu hồi ContactAccess "mồ côi" của 1 user.
+ *
+ * Bối cảnh (khách BMA): hook `ensureContactCollaborator` cấp ContactAccess theo CHỦ NICK.
+ * Ai quét QR dựng nick hộ người khác thì lãnh trọn quyền xem KH của nick đó — và
+ * KHÔNG có chỗ nào thu hồi khi nick sau đó bị xoá hoặc sang tên. Thực tế 2026-08-04 một
+ * nhân viên Marketing dựng hộ 2 nick → giữ quyền xem 1282 KH của 2 đồng nghiệp.
+ *
+ * Luật thu hồi: xoá mọi dòng collaborator của user mà contact đó KHÔNG còn Friend row nào
+ * nối tới một nick CÒN SỐNG user đang sở hữu. GIỮ NGUYÊN `role='primary'` (gán tay, không
+ * phải hệ quả của việc sở hữu nick).
+ *
+ * Best-effort: nuốt lỗi để không chặn luồng xoá nick / sang tên nick.
+ */
+export async function revokeStaleContactAccess(args: {
+  orgId: string;
+  userId: string;
+}): Promise<number> {
+  try {
+    return await prisma.$executeRaw`
+      DELETE FROM contact_access ca
+      WHERE ca.org_id = ${args.orgId}
+        AND ca.user_id = ${args.userId}
+        AND ca.role <> 'primary'
+        AND NOT EXISTS (
+          SELECT 1 FROM friends f
+          JOIN zalo_accounts z ON z.id = f.zalo_account_id
+          WHERE f.contact_id = ca.contact_id
+            AND z.owner_user_id = ${args.userId}
+            AND z.archived_at IS NULL
+        )`;
+  } catch {
+    return 0;
+  }
 }
 
 /**

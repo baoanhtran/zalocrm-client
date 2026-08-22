@@ -10,7 +10,9 @@ import { prisma } from '../../shared/database/prisma-client.js';
 import { logger } from '../../shared/utils/logger.js';
 
 export type Permission = 'read' | 'chat' | 'admin';
-const hierarchy: Record<Permission, number> = { read: 1, chat: 2, admin: 3 };
+// 2026-08-22: bảng `hierarchy` cục bộ đã gỡ — nó là bản sao thứ hai của thang quyền và
+// chính việc nhân bản luật là nguyên nhân màn Bạn bè lệch pha với màn Tin nhắn.
+// Thang quyền duy nhất nay nằm trong zalo-access-middleware.checkZaloAccess.
 
 /** Validate accountId belongs to user's org, throw 404 if not */
 export async function resolveAccount(accountId: string, orgId: string) {
@@ -19,21 +21,32 @@ export async function resolveAccount(accountId: string, orgId: string) {
   return account;
 }
 
-/** Check user has sufficient permission on the Zalo account. Returns false and sends reply if denied. */
+/**
+ * Check user has sufficient permission on the Zalo account. Returns false and sends reply if denied.
+ *
+ * 2026-08-22: trước đây hàm này TỰ tra bảng ZaloAccountAccess — bản sao thứ hai của luật
+ * quyền, và còn thiếu cả nhánh "chính chủ nick" lẫn cascade phòng ban. Kết quả: màn Bạn bè
+ * và Chiến dịch chặn trưởng phòng/CEO trên nick cấp dưới dù danh sách vẫn hiện.
+ * Nay ủy quyền cho checkZaloAccess để chỉ còn MỘT nguồn sự thật (xem chú thích ở đó).
+ */
 export async function checkAccess(request: FastifyRequest, reply: FastifyReply, accountId: string, minPermission: Permission): Promise<boolean> {
   const user = request.user!;
   if (['owner', 'admin'].includes(user.role)) return true;
 
   try {
-    const access = await prisma.zaloAccountAccess.findFirst({
-      where: { zaloAccountId: accountId, userId: user.id },
+    const { checkZaloAccess } = await import('./zalo-access-middleware.js');
+    const result = await checkZaloAccess({
+      userId: user.id,
+      orgId: user.orgId,
+      role: user.role,
+      zaloAccountId: accountId,
+      minPermission,
     });
-    if (!access) {
+    if (result === 'no_grant') {
       reply.status(403).send({ error: 'Không có quyền truy cập tài khoản Zalo này' });
       return false;
     }
-    const userLevel = hierarchy[access.permission as Permission] ?? 0;
-    if (userLevel < hierarchy[minPermission]) {
+    if (result === 'insufficient') {
       reply.status(403).send({ error: 'Không đủ quyền' });
       return false;
     }

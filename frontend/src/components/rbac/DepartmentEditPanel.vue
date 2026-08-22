@@ -21,10 +21,26 @@
             <h3 class="section-title">Thông tin</h3>
             <label class="field-label">Tên phòng ban</label>
             <input v-model="localName" class="field-input" @blur="saveName" @keyup.enter="saveName" />
-            <div v-if="parentName" class="parent-hint">
-              <span class="hint-label">Thuộc:</span>
-              <strong>{{ parentName }}</strong>
-            </div>
+
+            <!-- 2026-08-22: trước đây chỉ hiện chữ "Thuộc: X" đọc-only, nên phòng ban đã tạo
+                 KHÔNG cách nào đổi cha trên web (backend PATCH parentId thì có sẵn từ lâu).
+                 Ai lỡ tạo sai chỗ phải nhờ dev gọi API. Giờ cho sửa thẳng ở đây. -->
+            <label class="field-label">Phòng cha</label>
+            <select
+              v-model="parentPicker"
+              class="field-input"
+              :disabled="busy"
+              @change="saveParent"
+            >
+              <option value="">— Phòng gốc (không có cha) —</option>
+              <option v-for="d in parentOptions" :key="d.id" :value="d.id">
+                {{ '—'.repeat(d.depth) }} {{ d.name }}
+              </option>
+            </select>
+            <p class="field-hint">
+              Phòng cha quản lý mọi phòng con — trưởng phòng cha xem được nick và khách của
+              toàn bộ nhánh dưới. Tối đa 5 cấp.
+            </p>
           </section>
 
           <!-- ── Leader / Deputy ──────────────────── -->
@@ -157,6 +173,7 @@ const showAddMember = ref(false);
 const newMemberId = ref('');
 
 const localName = ref('');
+const parentPicker = ref('');
 const localLeaderId = ref<string | null>(null);
 const localDeputyId = ref<string | null>(null);
 const leaderPicker = ref('');
@@ -172,6 +189,7 @@ const accentColor = computed(() => {
 watch(() => [props.open, props.node?.id], async () => {
   if (!props.open || !props.node) return;
   localName.value = props.node.name;
+  parentPicker.value = props.node.parentId ?? '';
   localLeaderId.value = props.node.leaderUserId;
   localDeputyId.value = props.node.deputyUserId;
   leaderPicker.value = props.node.leaderUserId ?? '';
@@ -213,6 +231,41 @@ async function saveName() {
   } catch (e: any) {
     error.value = e?.response?.data?.error || 'Lỗi đổi tên';
     localName.value = props.node.name;
+  } finally {
+    busy.value = false;
+  }
+}
+
+/**
+ * Phòng ban được phép làm cha: mọi phòng TRỪ chính nó và con cháu của nó (đưa cha vào
+ * trong nhánh con của mình = vòng lặp). Lọc bằng materialized path — cùng luật với
+ * anti-cycle check ở backend (department-service.updateDepartment).
+ */
+const parentOptions = computed(() => {
+  const flat: DepartmentNode[] = [];
+  const walk = (nodes: DepartmentNode[]) => {
+    for (const n of nodes) {
+      flat.push(n);
+      if (n.children?.length) walk(n.children);
+    }
+  };
+  walk(store.departments);
+  const selfPath = props.node?.path;
+  if (!selfPath) return flat;
+  return flat.filter((d) => !d.path.startsWith(selfPath));
+});
+
+async function saveParent() {
+  if (!props.node) return;
+  const next = parentPicker.value || null;
+  if (next === (props.node.parentId ?? null)) return;
+  busy.value = true;
+  error.value = '';
+  try {
+    await store.moveDepartment(props.node.id, next);
+  } catch (e: any) {
+    error.value = e?.response?.data?.error || 'Lỗi đổi phòng cha';
+    parentPicker.value = props.node.parentId ?? '';
   } finally {
     busy.value = false;
   }
@@ -443,16 +496,19 @@ function avatarColor(name: string): string {
 }
 .field-input:disabled { background: #f8fafc; opacity: 0.7; }
 
-.parent-hint {
-  margin-top: 10px;
+/* Ô thứ 2 trở đi trong cùng section cần tách khỏi input phía trên */
+.field-input + .field-label { margin-top: 14px; }
+
+.field-hint {
+  margin: 8px 0 0;
   padding: 8px 12px;
   background: #fdf3df;
   border-radius: 6px;
   border-left: 3px solid #d9a441;
   font-size: 12px;
+  line-height: 1.5;
   color: #41454d;
 }
-.hint-label { font-weight: 500; margin-right: 6px; }
 
 /* Role block */
 .role-block { margin-bottom: 16px; }

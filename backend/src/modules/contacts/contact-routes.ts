@@ -246,7 +246,7 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
 
       // Phase Contact Scope Hybrid 2026-05-27: per-viewer preview + aggregate.
       // Sale chỉ thấy preview/score/status từ Friend rows của nick mình; admin/owner giữ aggregate global.
-      const zScope = cScope.isOrgAdmin
+      const zScope = cScope.canViewAll
         ? null
         : await getZaloScope(user.id, user.orgId, user.role);
       const visibleZaloIds: Set<string> | null = zScope ? new Set(zScope.accessibleIds) : null;
@@ -272,7 +272,7 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
             nicksByKind,
             ...display,
             // Phase Contact Scope Hybrid: badge UI render — "Phụ trách chính" vs "Đồng đội cùng chăm"
-            viewerRole: cScope.isOrgAdmin ? 'admin' : (isPrimary ? 'primary' : 'collaborator'),
+            viewerRole: cScope.canViewAll ? 'admin' : (isPrimary ? 'primary' : 'collaborator'),
             // #4: số lần gắn sequence (auto+manual) ở mức Cha (SĐT) — tổng + đang chạy.
             sequenceAttachCount: seqCountMap.get(c.id)?.total ?? 0,
             sequenceActiveCount: seqCountMap.get(c.id)?.active ?? 0,
@@ -505,7 +505,7 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
       const display = computeAggregateDisplay(contact, visibleFriends as any);
       const preview = computeViewerPreview(contact as any, visibleZaloIds);
       const cScope = await getContactScope(user.id, user.orgId, user.role);
-      const viewerRole = cScope.isOrgAdmin
+      const viewerRole = cScope.canViewAll
         ? 'admin'
         : (cScope.primaryContactIds.has(contact.id) ? 'primary' : 'collaborator');
 

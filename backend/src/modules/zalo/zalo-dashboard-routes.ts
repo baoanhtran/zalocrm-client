@@ -400,6 +400,17 @@ export async function zaloDashboardRoutes(app: FastifyInstance): Promise<void> {
         logger.warn(`[zalo-owner-reassign] revokeAllSessions(${oldOwnerId}) failed: ${String(err)}`);
       }
 
+      // 2026-08-22: sang tên nick thì thu hồi luôn quyền xem KH mà chủ CŨ có được nhờ nick này.
+      // Trước đây chỉ dọn zalo_account_access, còn contact_access thì giữ vĩnh viễn → người
+      // dựng nick hộ đồng nghiệp vẫn xem được KH của họ mãi mãi.
+      if (oldOwnerId) {
+        const { revokeStaleContactAccess } = await import('../contacts/contact-scope.js');
+        const revoked = await revokeStaleContactAccess({ orgId: user.orgId, userId: oldOwnerId });
+        if (revoked > 0) {
+          logger.info(`[zalo-owner-reassign] thu hồi ${revoked} ContactAccess mồ côi của chủ cũ ${oldOwnerId}`);
+        }
+      }
+
       logger.info(
         `[zalo-owner-reassign] account=${id} from=${oldOwnerId} to=${newOwnerUserId} by=${userId}`,
       );

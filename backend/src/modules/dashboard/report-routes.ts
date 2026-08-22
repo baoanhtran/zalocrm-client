@@ -30,7 +30,7 @@ async function gateReportAccess(request: FastifyRequest, reply: FastifyReply): P
   const user = request.user!;
   if (user.role === 'owner' || user.role === 'admin') return true;
   const cScope = await getContactScope(user.id, user.orgId, user.role);
-  if (cScope.isOrgAdmin) return true;
+  if (cScope.canViewAll) return true;
   // Leader/deputy: visibleUserIds.size > 1 (có người dưới dept)
   if (cScope.visibleUserIds.size > 1) return true;
   reply.status(403).send({

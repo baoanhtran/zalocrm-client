@@ -33,7 +33,7 @@ export async function analyticsRoutes(app: FastifyInstance): Promise<void> {
     if (user.role === 'owner' || user.role === 'admin') return;
     const { getContactScope } = await import('../contacts/contact-scope.js');
     const cScope = await getContactScope(user.id, user.orgId, user.role);
-    if (cScope.isOrgAdmin || cScope.visibleUserIds.size > 1) return;
+    if (cScope.canViewAll || cScope.visibleUserIds.size > 1) return;
     reply.status(403).send({
       error: 'Sale member không có quyền xem phân tích team. Liên hệ trưởng phòng.',
       code: 'analytics_member_forbidden',

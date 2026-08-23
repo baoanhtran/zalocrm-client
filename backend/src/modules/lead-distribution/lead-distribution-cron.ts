@@ -11,9 +11,13 @@ import { logger } from '../../shared/utils/logger.js';
 import { runAllOrgs } from './runner.js';
 
 export function startLeadDistributionCron(): void {
-  // 00:00 UTC = 07:00 giờ VN — sale vào ca là đã có lead trên màn hình.
-  // Ghi mốc UTC vì container chạy UTC; node-cron đọc theo TZ tiến trình.
-  cron.schedule('0 0 * * *', async () => {
+  // 07:00 giờ VN — sale vào ca là đã có lead trên màn hình.
+  //
+  // Khai báo timezone TƯỜNG MINH, đừng suy ra từ TZ tiến trình. Container hiện đặt
+  // TZ=Asia/Ho_Chi_Minh (docker/Dockerfile:33 + docker-compose.yml:63), nhưng nếu ai
+  // đó gỡ ra hoặc chạy ngoài Docker thì cùng một biểu thức cron sẽ nhảy sang giờ khác
+  // mà không báo gì. Ghi rõ ở đây thì đúng trong mọi trường hợp.
+  cron.schedule('0 7 * * *', async () => {
     logger.info('[lead-distribution] bắt đầu chia lead ngày...');
     try {
       const summaries = await runAllOrgs();
@@ -32,6 +36,6 @@ export function startLeadDistributionCron(): void {
     } catch (err) {
       logger.error('[lead-distribution] lỗi:', err);
     }
-  });
-  logger.info('[lead-distribution] đã hẹn lịch chia lead ngày (00:00 UTC / 07:00 VN)');
+  }, { timezone: 'Asia/Ho_Chi_Minh' });
+  logger.info('[lead-distribution] đã hẹn lịch chia lead ngày (07:00 giờ VN)');
 }

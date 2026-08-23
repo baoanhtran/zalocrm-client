@@ -318,8 +318,8 @@
                 </template>
                 <span v-else class="empty">—</span>
               </td>
-              <td>
-                <span v-if="contact.source" class="chip chip-grey">{{ sourceLabel(contact.source) }}</span>
+              <td class="c-src">
+                <span v-if="contact.source" class="chip chip-grey chip-ellipsis" :title="contact.source">{{ sourceLabel(contact.source) }}</span>
                 <span v-else class="empty">—</span>
               </td>
               <td>
@@ -1986,6 +1986,19 @@ watch(
   padding: 1px 7px; border-radius: 9px;
   font-size: 10.5px; font-weight: 500;
   white-space: nowrap;
+}
+/* Cột Nguồn chỉ rộng 54px vì được thiết kế cho mã ngắn (FB / TT / GT / CN), nhưng
+   source thật có thể dài ("khao-sat:Đà Nẵng", "phone_import"). Bảng dùng
+   table-layout:fixed và .chip là nowrap + không max-width → chip tràn khỏi ô và
+   VẼ ĐÈ lên cột Trạng thái bên cạnh. Cắt bằng ellipsis, giá trị đầy đủ ở tooltip.
+   Cần display:inline-block — text-overflow không áp lên inline-flex. */
+.c-src { overflow: hidden; }
+.chip-ellipsis {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
 }
 .chip-success { background: rgba(0,200,83,0.12); color: var(--success); }
 .chip-warning { background: rgba(255,145,0,0.15); color: var(--warning); }

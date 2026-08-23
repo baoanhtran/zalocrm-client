@@ -48,4 +48,8 @@ secrets/
 
 # Telegram
 public-key-telegram
-public-key-telegram-product.playwright-mcp/
+public-key-telegram-product
+
+# Ảnh chụp/log của Playwright MCP
+.playwright-mcp/
+

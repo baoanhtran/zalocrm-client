@@ -414,10 +414,10 @@
               <td>
                 <strong>{{ contact.totalInbound ?? 0 }}</strong> / {{ contact.totalOutbound ?? 0 }}
               </td>
-              <td>
+              <td class="c-tags">
                 <div class="tag-cell">
-                  <span v-for="tag in (contact.tags || []).slice(0, 2)" :key="tag" class="chip chip-grey">{{ tag }}</span>
-                  <span v-if="(contact.tags || []).length > 2" class="chip chip-grey">
+                  <span v-for="tag in (contact.tags || []).slice(0, 2)" :key="tag" class="chip chip-grey chip-ellipsis" :title="tag">{{ tag }}</span>
+                  <span v-if="(contact.tags || []).length > 2" class="chip chip-grey" :title="(contact.tags || []).slice(2).join(', ')">
                     +{{ contact.tags.length - 2 }}
                   </span>
                 </div>
@@ -1992,7 +1992,7 @@ watch(
    table-layout:fixed và .chip là nowrap + không max-width → chip tràn khỏi ô và
    VẼ ĐÈ lên cột Trạng thái bên cạnh. Cắt bằng ellipsis, giá trị đầy đủ ở tooltip.
    Cần display:inline-block — text-overflow không áp lên inline-flex. */
-.c-src { overflow: hidden; }
+.c-src, .c-tags { overflow: hidden; }
 .chip-ellipsis {
   display: inline-block;
   max-width: 100%;

@@ -15,6 +15,8 @@ import type { Plan, PlannedAssignment } from './planner.js';
 const ESCALATE_SLUG = 'cham-qua-han';
 const ESCALATE_NAME = '⏳ Chăm quá hạn';
 const ESCALATE_COLOR = '#F5A623';
+/** Nhãn ghi vào cột JSON Contact.tags — xem addJsonTag() về lý do phải ghi 2 nơi. */
+const CO_CARE_LABEL = '🤝 Cùng chăm';
 
 export interface ExecuteResult {
   round1: number;
@@ -54,6 +56,34 @@ async function ensureEscalateTag(orgId: string): Promise<string> {
       }),
     );
   return created.id;
+}
+
+/**
+ * Thêm nhãn vào cột JSON `Contact.tags` nếu chưa có.
+ *
+ * Vì sao phải ghi HAI nơi: hệ thống đang giữa đợt chuyển sang taxonomy mới
+ * (Tag + ContactTag). Nhãn ghi vào bảng junction hiển thị trong khung chat, NHƯNG
+ * màn Khách hàng đọc thẳng cột JSON cũ (`ContactsView.vue:419`) và API contacts
+ * không trả junction về. Chỉ ghi junction thì nhãn vô hình đúng ở chỗ admin cần
+ * nhìn — mà mục đích của việc gắn cờ là để admin lọc ra xem.
+ *
+ * Giới hạn đã biết: `PUT /contacts/:id/tags` ghi đè cả mảng, nên sale sửa nhãn tay
+ * có thể xoá mất nhãn này. Chấp nhận — đây là tín hiệu cho admin, không phải khoá.
+ */
+async function addJsonTag(
+  tx: { contact: { findUnique: Function; update: Function } },
+  contactId: string,
+  label: string,
+): Promise<void> {
+  const c = await tx.contact.findUnique({ where: { id: contactId }, select: { tags: true } });
+  if (!c) return;
+  const cur: string[] = Array.isArray(c.tags) ? (c.tags as unknown[]).filter((t): t is string => typeof t === 'string') : [];
+  if (cur.includes(label)) return;
+  // Chèn vào ĐẦU mảng, không phải cuối: cột Tags CRM chỉ hiện 2 nhãn đầu rồi gộp
+  // phần còn lại thành "+N" (ContactsView.vue:419). Ghi vào cuối thì cờ bị nuốt vào
+  // "+N" và admin vẫn không thấy — đúng thứ vừa hỏng. Nhãn nguồn/tỉnh bị đẩy xuống
+  // cũng không mất thông tin gì vì đã có cột Nguồn và Tỉnh riêng.
+  await tx.contact.update({ where: { id: contactId }, data: { tags: [label, ...cur] } });
 }
 
 /**
@@ -124,6 +154,9 @@ async function applyRound2(orgId: string, items: PlannedAssignment[], errors: st
         await tx.leadAssignment.create({
           data: { orgId, contactId: a.contactId, userId: a.userId, role: 'collaborator', round: 2 },
         });
+        // Nhãn JSON để hiện trên màn Khách hàng — xem addJsonTag(). Junction do
+        // recomputeCungChamTag() lo, nhưng nó chỉ ghi bảng mới nên màn KH không thấy.
+        await addJsonTag(tx as never, a.contactId, CO_CARE_LABEL);
       });
       done++;
 
@@ -176,6 +209,7 @@ async function applyEscalations(
           where: { id: it.assignmentId },
           data: { escalatedAt: now },
         });
+        await addJsonTag(tx as never, it.contactId, ESCALATE_NAME);
       });
       done++;
       logActivity({

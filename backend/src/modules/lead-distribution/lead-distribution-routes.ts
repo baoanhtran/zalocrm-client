@@ -47,7 +47,18 @@ export async function leadDistributionRoutes(app: FastifyInstance): Promise<void
     const [users, members] = await Promise.all([
       prisma.user.findMany({
         where: { orgId, isActive: true },
-        select: { id: true, fullName: true, email: true, role: true },
+        select: {
+          id: true,
+          fullName: true,
+          email: true,
+          role: true,
+          // Chi nhánh = phòng ban có khai tỉnh. Trang Chia lead cần hiện ra để admin
+          // thấy ngay ai chưa được xếp chi nhánh — người đó sẽ không nhận lead nào
+          // dù đã tick vào vòng chia, và đó là câu hỏi đầu tiên họ sẽ đi hỏi.
+          departmentMember: {
+            select: { department: { select: { name: true, province: true, archivedAt: true } } },
+          },
+        },
         orderBy: { fullName: 'asc' },
       }),
       prisma.leadDistributionMember.findMany({
@@ -83,11 +94,15 @@ export async function leadDistributionRoutes(app: FastifyInstance): Promise<void
       config: cfg,
       members: users.map((u) => {
         const m = memberBy.get(u.id);
+        const dept = u.departmentMember?.department;
+        const branch = dept && !dept.archivedAt && dept.province ? dept : null;
         return {
           userId: u.id,
           fullName: u.fullName,
           email: u.email,
           role: u.role,
+          departmentName: dept?.name ?? null,
+          province: branch?.province ?? null,
           // Chưa có bản ghi = chưa được admin tick vào vòng chia.
           inPool: !!m?.enabled,
           dailyQuota: m?.dailyQuota ?? null,
@@ -176,7 +191,7 @@ export async function leadDistributionRoutes(app: FastifyInstance): Promise<void
     const q = (request.query ?? {}) as { dryRun?: string };
     const dryRun = q.dryRun !== 'false';
     const res = await backfill(user.orgId, { dryRun });
-    return reply.send({ dryRun, count: res.count });
+    return reply.send({ dryRun, count: res.count, provinceFilled: res.provinceFilled });
   });
 
   // ── GET history ───────────────────────────────────────────────────────────

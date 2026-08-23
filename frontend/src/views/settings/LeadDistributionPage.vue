@@ -89,6 +89,7 @@
               <tr>
                 <th style="width: 88px">Nhận lead</th>
                 <th>Sale</th>
+                <th style="width: 160px">Chi nhánh</th>
                 <th style="width: 150px">Hạn mức riêng</th>
                 <th style="width: 120px">Đang ôm</th>
                 <th style="width: 120px">Hôm nay</th>
@@ -104,6 +105,12 @@
                   <div class="ld-email">{{ m.email }}</div>
                 </td>
                 <td>
+                  <span v-if="m.province" class="ld-branch">{{ m.province }}</span>
+                  <span v-else class="ld-branch ld-branch-missing" title="Vào Cài đặt › Phòng ban để khai tỉnh cho phòng ban của nhân viên này">
+                    chưa có
+                  </span>
+                </td>
+                <td>
                   <v-text-field v-model.number="m.dailyQuota" type="number" :min="0" :max="500"
                     :placeholder="String(form.dailyQuotaPerUser)" density="compact" variant="outlined"
                     hide-details :disabled="!canEdit || !m.inPool" />
@@ -114,8 +121,17 @@
             </tbody>
           </table>
         </div>
+        <v-alert v-if="poolWithoutBranch.length" type="warning" variant="tonal" density="compact"
+          class="ld-alert" style="margin-top: 10px">
+          {{ poolWithoutBranch.length }} nhân viên đang bật nhận lead nhưng chưa có chi nhánh:
+          <strong>{{ poolWithoutBranch.join(', ') }}</strong>.
+          Họ sẽ không được chia khách nào cho tới khi phòng ban của họ được khai tỉnh ở
+          Cài đặt › Phân quyền › Phòng ban.
+        </v-alert>
         <p class="ld-hint" style="margin-top: 10px">
           Bỏ trống hạn mức riêng = dùng mức chung ở trên. “Đang ôm” là số khách chưa chốt.
+          Khách chỉ được chia cho nhân viên cùng tỉnh — khách tỉnh chưa có chi nhánh sẽ được
+          gắn nhãn “📍 Chưa có chi nhánh” và chờ, không chia bừa sang tỉnh khác.
         </p>
       </section>
 
@@ -177,6 +193,8 @@ const auth = useAuthStore();
 
 interface MemberRow {
   userId: string; fullName: string | null; email: string; role: string;
+  /** Tỉnh của chi nhánh (Department.province). null = chưa xếp chi nhánh → không nhận lead. */
+  province: string | null; departmentName: string | null;
   inPool: boolean; dailyQuota: number | null; effectiveQuota: number;
   activeLoad: number; assignedToday: number;
 }
@@ -209,6 +227,11 @@ const canEdit = computed(() => ['owner', 'admin'].includes(auth.user?.role ?? ''
 
 const estimatedDaily = computed(
   () => members.value.filter((m) => m.inPool).length * (Number(form.dailyQuotaPerUser) || 0),
+);
+// Bật nhận lead mà không có chi nhánh là cấu hình chết lặng: người đó không bao giờ
+// được chia gì và không có lỗi nào nổi lên. Nói thẳng ra ở đây.
+const poolWithoutBranch = computed(() =>
+  members.value.filter((m) => m.inPool && !m.province).map((m) => m.fullName || m.email),
 );
 // Mốc gắn cờ sớm hơn mốc thêm sale 2 là cấu hình mâu thuẫn — backend vẫn chạy được
 // (hai việc độc lập) nhưng kết quả vô nghĩa với người dùng, nên cảnh báo tại chỗ.
@@ -359,6 +382,11 @@ onMounted(load);
 .ld-table td { padding: 8px 10px; border-bottom: 1px solid #F3F4F6; vertical-align: middle; }
 .ld-name { font-weight: 600; color: #111827; }
 .ld-email { font-size: 11.5px; color: #9CA3AF; }
+.ld-branch {
+  display: inline-block; padding: 2px 8px; border-radius: 10px;
+  font-size: 12px; background: #EEF2FF; color: #3730A3; white-space: nowrap;
+}
+.ld-branch-missing { background: #FEF3C7; color: #92400E; font-style: italic; }
 .ld-num { font-variant-numeric: tabular-nums; color: #374151; }
 .ld-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; margin: 18px 0 6px; }
 .ld-noperm { font-size: 12.5px; color: #9CA3AF; margin-right: auto; }

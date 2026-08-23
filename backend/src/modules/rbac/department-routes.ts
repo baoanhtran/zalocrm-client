@@ -36,6 +36,7 @@ export async function registerDepartmentRoutes(app: FastifyInstance): Promise<vo
       name?: string;
       parentId?: string | null;
       displayOrder?: number;
+      province?: string | null;
     };
     try {
       const dept = await createDepartment({
@@ -43,6 +44,7 @@ export async function registerDepartmentRoutes(app: FastifyInstance): Promise<vo
         name: body.name ?? '',
         parentId: body.parentId ?? null,
         displayOrder: body.displayOrder,
+        province: body.province,
       });
       return reply.send({ ok: true, department: dept });
     } catch (e: any) {
@@ -59,6 +61,7 @@ export async function registerDepartmentRoutes(app: FastifyInstance): Promise<vo
       name?: string;
       parentId?: string | null;
       displayOrder?: number;
+      province?: string | null;
     };
     try {
       const dept = await updateDepartment({
@@ -67,6 +70,9 @@ export async function registerDepartmentRoutes(app: FastifyInstance): Promise<vo
         name: body.name,
         parentId: body.parentId,
         displayOrder: body.displayOrder,
+        // Chỉ chuyển tiếp khi client thực sự gửi field — 'province' in body phân biệt
+        // "không đụng tới" với "gỡ chi nhánh" (gửi null), thứ mà body.province không nói được.
+        ...('province' in body ? { province: body.province } : {}),
       });
       return reply.send({ ok: true, department: dept });
     } catch (e: any) {

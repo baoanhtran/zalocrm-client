@@ -10,6 +10,8 @@
  * Spec: docs/superpowers/specs/2026-08-19-chia-lead-tu-dong-design.md
  */
 
+import { provinceKey } from '../../shared/utils/province.js';
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 // Mốc "ngày VN" dùng vnDayRange() ở src/shared/utils/vn-time.ts — cron truyền
@@ -24,6 +26,12 @@ export interface PlannerConfig {
 /** Một sale trong vòng chia. `dailyQuota` đã resolve xong (member ?? org). */
 export interface SaleMember {
   userId: string;
+  /**
+   * Tỉnh của chi nhánh sale này thuộc về (Department.province).
+   * null = chưa xếp vào chi nhánh nào → KHÔNG nhận lead nào, kể cả khi đang rảnh.
+   * Thà không chia còn hơn chia cho người ở tỉnh khác.
+   */
+  province: string | null;
   dailyQuota: number;
   /** Số khách chưa chốt user này đang ôm — dùng để cân tải. */
   activeLoad: number;
@@ -35,6 +43,8 @@ export interface SaleMember {
 export interface CandidateLead {
   contactId: string;
   createdAt: Date;
+  /** Tỉnh của khách (Contact.province). null = không rõ địa bàn → treo lại. */
+  province: string | null;
 }
 
 /** Một dòng LeadAssignment round 1 đang tồn tại, kèm trạng thái contact. */
@@ -51,6 +61,8 @@ export interface PrimaryAssignment {
   hasRound2: boolean;
   /** MỌI user đã có ContactAccess với khách này (kể cả dính qua Zalo/chat ảo). */
   accessUserIds: string[];
+  /** Tỉnh của khách — sale thứ 2 phải cùng chi nhánh với sale thứ nhất. */
+  province: string | null;
 }
 
 export interface PlannedAssignment {
@@ -63,6 +75,19 @@ export interface Plan {
   round2: PlannedAssignment[];
   /** Dòng round 1 cần gắn cờ báo admin. */
   escalate: Array<{ assignmentId: string; contactId: string }>;
+  /**
+   * Lead không ghép được chi nhánh nào — cần gắn cờ để admin xử lý tay.
+   *
+   * KHÁC với "chi nhánh đúng nhưng hôm nay đã đủ hạn mức": trường hợp đó lead nằm
+   * im chờ mai, không phải sự cố, và không được gắn cờ (gắn thì ngày nào cũng có
+   * một đống cờ giả và admin sẽ thôi nhìn vào chúng).
+   */
+  noBranch: string[];
+  /**
+   * Sale đang bật nhận lead nhưng chưa được xếp vào chi nhánh nào. Không phải lỗi
+   * để chặn việc chạy, nhưng là câu trả lời cho "sao sale này không được chia gì".
+   */
+  membersWithoutBranch: string[];
 }
 
 /**
@@ -104,6 +129,19 @@ interface LoadState {
   load: number;
   /** Còn nhận thêm được mấy lead nữa hôm nay. */
   remaining: number;
+  /** Khoá tỉnh đã chuẩn hoá — chuỗi rỗng nghĩa là chưa thuộc chi nhánh nào. */
+  provKey: string;
+}
+
+/**
+ * Nhóm sale cùng địa bàn với khách. Rỗng nghĩa là KHÔNG AI được phép nhận khách này
+ * — hoặc khách không có tỉnh, hoặc tỉnh đó chưa lập chi nhánh, hoặc chi nhánh đó
+ * không còn sale nào đang bật.
+ */
+function branchOf(pool: LoadState[], province: string | null): LoadState[] {
+  const key = provinceKey(province);
+  if (!key) return [];
+  return pool.filter((m) => m.provKey === key);
 }
 
 /**
@@ -129,29 +167,43 @@ function pickLeastLoaded(
  * bằng round-robin, còn khi lead không đủ chia đều thì phần dư KHÔNG rơi vào
  * cùng một người mỗi ngày như cách xoay theo thứ tự cố định.
  */
-export function planRound1(leads: CandidateLead[], members: SaleMember[]): PlannedAssignment[] {
+export function planRound1(
+  leads: CandidateLead[],
+  members: SaleMember[],
+): { assigned: PlannedAssignment[]; noBranch: string[] } {
   const pool: LoadState[] = members.map((m) => ({
     userId: m.userId,
     load: m.activeLoad,
     remaining: Math.max(0, m.dailyQuota - m.assignedToday),
+    provKey: provinceKey(m.province),
   }));
 
   const sorted = [...leads].sort(
     (a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.contactId.localeCompare(b.contactId),
   );
 
-  const out: PlannedAssignment[] = [];
+  const assigned: PlannedAssignment[] = [];
+  const noBranch: string[] = [];
   for (const lead of sorted) {
+    const branch = branchOf(pool, lead.province);
+    if (branch.length === 0) {
+      // Không có chi nhánh nào nhận địa bàn này — treo lại, gắn cờ cho admin.
+      noBranch.push(lead.contactId);
+      continue;
+    }
     // Hòa ở vòng 1 lấy userId nhỏ nhất — kết quả tái hiện được khi đối soát.
-    const chosen = pickLeastLoaded(pool, (tied) =>
+    const chosen = pickLeastLoaded(branch, (tied) =>
       [...tied].sort((a, b) => a.userId.localeCompare(b.userId))[0],
     );
-    if (!chosen) break; // mọi người đã đầy hạn mức
-    out.push({ contactId: lead.contactId, userId: chosen.userId });
+    // `continue` chứ KHÔNG `break`: chi nhánh này hết hạn mức hôm nay không có nghĩa
+    // là chi nhánh tỉnh khác cũng hết. Break ở đây thì mọi lead xếp sau trong hàng
+    // FIFO đều chết theo một tỉnh đang bận.
+    if (!chosen) continue;
+    assigned.push({ contactId: lead.contactId, userId: chosen.userId });
     chosen.load++;
     chosen.remaining--;
   }
-  return out;
+  return { assigned, noBranch };
 }
 
 /**
@@ -178,6 +230,7 @@ export function planRound2(
     userId: m.userId,
     load: m.activeLoad,
     remaining: Math.max(0, m.dailyQuota),
+    provKey: provinceKey(m.province),
   }));
 
   const due = primaries
@@ -188,7 +241,10 @@ export function planRound2(
   for (const p of due) {
     const taken = new Set(p.accessUserIds);
     taken.add(p.userId); // phòng khi ContactAccess chưa kịp đồng bộ
-    const candidates = pool.filter((m) => !taken.has(m.userId));
+    // Lọc chi nhánh TRƯỚC rồi mới loại người đã có quyền. Thiếu bước này thì sau 14
+    // ngày khách Đà Nẵng bị ghép thêm một sale Hà Nội vào chăm cùng — đúng lỗi đang
+    // có trước khi thêm chi nhánh.
+    const candidates = branchOf(pool, p.province).filter((m) => !taken.has(m.userId));
     // Hòa ở vòng 2 bốc ngẫu nhiên — đúng yêu cầu "pick random" của khách.
     const chosen = pickLeastLoaded(candidates, (tied) => tied[Math.floor(rng() * tied.length)]);
     if (!chosen) continue; // không còn ai để thêm (org 1 sale, hoặc mọi người đã đầy) — bỏ qua im lặng
@@ -227,7 +283,7 @@ export function buildPlan(input: {
   now: Date;
   rng?: () => number;
 }): Plan {
-  const round1 = planRound1(input.leads, input.members);
+  const { assigned: round1, noBranch } = planRound1(input.leads, input.members);
 
   // Vòng 2 phải thấy tải mà vòng 1 vừa tạo ra trong CHÍNH lần chạy này. Nếu dùng
   // lại ảnh chụp tải ban đầu thì sale vừa nhận 12 lead mới vẫn bị coi là rảnh và
@@ -243,5 +299,7 @@ export function buildPlan(input: {
     round1,
     round2: planRound2(input.primaries, membersAfterRound1, input.config, input.now, input.rng),
     escalate: planEscalations(input.primaries, input.config, input.now),
+    noBranch,
+    membersWithoutBranch: input.members.filter((m) => !provinceKey(m.province)).map((m) => m.userId),
   };
 }

@@ -7,6 +7,7 @@
  */
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { prisma } from '../../shared/database/prisma-client.js';
+import { cleanProvince } from '../../shared/utils/province.js';
 import { logger } from '../../shared/utils/logger.js';
 
 // ── API key auth middleware ────────────────────────────────────────────────────
@@ -157,6 +158,9 @@ export async function publicApiRoutes(app: FastifyInstance): Promise<void> {
           phone: body.phone,
           email: body.email,
           source: body.source,
+          // Tỉnh/thành — CRM dùng để ghép khách với chi nhánh khi chia lead. Lưu
+          // nguyên dạng có dấu, việc so khớp do provinceKey() lo.
+          province: cleanProvince(body.province),
           status: body.status ?? 'new',
           notes: body.notes,
           tags: body.tags ?? [],
@@ -202,6 +206,10 @@ export async function publicApiRoutes(app: FastifyInstance): Promise<void> {
           phone: body.phone,
           email: body.email,
           source: body.source,
+          // 'province' in body: không gửi thì giữ nguyên tỉnh cũ. Nếu viết thẳng
+          // cleanProvince(body.province) thì mọi PUT không kèm province sẽ xoá trắng
+          // tỉnh của khách, và lần chia lead sau khách đó thành lead treo.
+          ...('province' in body ? { province: cleanProvince(body.province) } : {}),
           status: body.status,
           notes: body.notes,
           tags: body.tags,

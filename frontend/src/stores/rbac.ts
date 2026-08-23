@@ -20,6 +20,8 @@ export interface DepartmentNode {
   path: string;
   depth: number;
   displayOrder: number;
+  /** Tỉnh/thành phòng ban này là chi nhánh. null = phòng ban thường. */
+  province: string | null;
   archivedAt: string | null;
   memberCount: number;
   leaderUserId: string | null;
@@ -161,6 +163,11 @@ export const useRbacStore = defineStore('rbac', {
     },
     async moveDepartment(id: string, parentId: string | null) {
       await api.patch(`/departments/${id}`, { parentId });
+      await this.loadDepartments();
+    },
+    /** Gán/gỡ tỉnh cho phòng ban. null = không còn là chi nhánh địa bàn. */
+    async setDepartmentProvince(id: string, province: string | null) {
+      await api.patch(`/departments/${id}`, { province });
       await this.loadDepartments();
     },
     async archiveDepartment(id: string) {

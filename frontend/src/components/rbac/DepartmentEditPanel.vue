@@ -22,6 +22,21 @@
             <label class="field-label">Tên phòng ban</label>
             <input v-model="localName" class="field-input" @blur="saveName" @keyup.enter="saveName" />
 
+            <label class="field-label">Tỉnh/thành phụ trách</label>
+            <input
+              v-model="localProvince"
+              class="field-input"
+              :disabled="busy"
+              placeholder="Ví dụ: Hà Nội — để trống nếu đây không phải chi nhánh"
+              @blur="saveProvince"
+              @keyup.enter="saveProvince"
+            />
+            <p class="field-hint">
+              Khách được nhập về từ tỉnh này sẽ chỉ chia cho nhân viên của phòng ban này.
+              Mỗi tỉnh chỉ được một phòng ban phụ trách. Để trống thì phòng ban vẫn hoạt
+              động bình thường nhưng không nhận lead theo địa bàn.
+            </p>
+
             <!-- 2026-08-22: trước đây chỉ hiện chữ "Thuộc: X" đọc-only, nên phòng ban đã tạo
                  KHÔNG cách nào đổi cha trên web (backend PATCH parentId thì có sẵn từ lâu).
                  Ai lỡ tạo sai chỗ phải nhờ dev gọi API. Giờ cho sửa thẳng ở đây. -->
@@ -173,6 +188,7 @@ const showAddMember = ref(false);
 const newMemberId = ref('');
 
 const localName = ref('');
+const localProvince = ref('');
 const parentPicker = ref('');
 const localLeaderId = ref<string | null>(null);
 const localDeputyId = ref<string | null>(null);
@@ -189,6 +205,7 @@ const accentColor = computed(() => {
 watch(() => [props.open, props.node?.id], async () => {
   if (!props.open || !props.node) return;
   localName.value = props.node.name;
+  localProvince.value = props.node.province ?? '';
   parentPicker.value = props.node.parentId ?? '';
   localLeaderId.value = props.node.leaderUserId;
   localDeputyId.value = props.node.deputyUserId;
@@ -231,6 +248,24 @@ async function saveName() {
   } catch (e: any) {
     error.value = e?.response?.data?.error || 'Lỗi đổi tên';
     localName.value = props.node.name;
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function saveProvince() {
+  if (!props.node) return;
+  const next = localProvince.value.trim();
+  const cur = props.node.province ?? '';
+  if (next === cur) return;
+  busy.value = true;
+  try {
+    // Chuỗi rỗng phải gửi null: để '' thì mọi phòng ban bỏ trống đều mang cùng một giá
+    // trị và phòng ban thứ hai sẽ đụng ràng buộc "mỗi tỉnh một chi nhánh".
+    await store.setDepartmentProvince(props.node.id, next === '' ? null : next);
+  } catch (e: any) {
+    error.value = e?.response?.data?.error || 'Lỗi lưu tỉnh';
+    localProvince.value = cur;
   } finally {
     busy.value = false;
   }

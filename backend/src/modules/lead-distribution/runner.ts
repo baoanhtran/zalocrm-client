@@ -11,7 +11,7 @@ import { logger } from '../../shared/utils/logger.js';
 import { withTenant } from '../../shared/tenant/tenant-context.js';
 import { vnDayRange } from '../../shared/utils/vn-time.js';
 import { buildPlan, isContactClosed, resolveQuota, type Plan, type PlannerConfig, type PrimaryAssignment, type SaleMember } from './planner.js';
-import { executePlan, type ExecuteResult } from './executor.js';
+import { executePlan, NO_BRANCH_SLUG, type ExecuteResult } from './executor.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -38,7 +38,18 @@ export interface RunSummary {
 async function loadMembers(orgId: string, config: PlannerConfig): Promise<SaleMember[]> {
   const members = await prisma.leadDistributionMember.findMany({
     where: { orgId, enabled: true, user: { isActive: true } },
-    select: { userId: true, dailyQuota: true },
+    select: {
+      userId: true,
+      dailyQuota: true,
+      // Chi nhánh của sale = phòng ban họ thuộc về, miễn phòng ban đó có khai tỉnh.
+      user: {
+        select: {
+          departmentMember: {
+            select: { department: { select: { province: true, archivedAt: true } } },
+          },
+        },
+      },
+    },
   });
   if (members.length === 0) return [];
 
@@ -63,16 +74,36 @@ async function loadMembers(orgId: string, config: PlannerConfig): Promise<SaleMe
   const loadBy = new Map(loadRows.map((r) => [r.userId, r._count._all]));
   const todayBy = new Map(todayRows.map((r) => [r.userId, r._count._all]));
 
-  return members.map((m) => ({
-    userId: m.userId,
-    dailyQuota: resolveQuota(m.dailyQuota, config.dailyQuotaPerUser),
-    activeLoad: loadBy.get(m.userId) ?? 0,
-    assignedToday: todayBy.get(m.userId) ?? 0,
-  }));
+  return members.map((m) => {
+    const dept = m.user.departmentMember?.department;
+    return {
+      userId: m.userId,
+      // Phòng ban đã lưu trữ thì coi như sale không còn chi nhánh — nhận lead theo một
+      // chi nhánh đã đóng thì khách rơi vào vùng không ai chịu trách nhiệm.
+      province: dept && !dept.archivedAt ? dept.province : null,
+      dailyQuota: resolveQuota(m.dailyQuota, config.dailyQuotaPerUser),
+      activeLoad: loadBy.get(m.userId) ?? 0,
+      assignedToday: todayBy.get(m.userId) ?? 0,
+    };
+  });
 }
 
-/** Lead chưa có chủ, chưa từng vào vòng chia. */
-async function loadCandidateLeads(orgId: string, requirePhone: boolean, take: number) {
+/**
+ * Lead chưa có chủ, chưa từng vào vòng chia.
+ *
+ * `flagged` tách hàng chờ làm hai và đây KHÔNG phải chuyện tối ưu, mà là chống đói.
+ * Lead treo (không ghép được chi nhánh) vẫn là lead cũ nhất nên trong một hàng FIFO
+ * duy nhất chúng chiếm trọn cửa sổ `take` mỗi ngày, và lead mới của tỉnh ĐÃ có chi
+ * nhánh sẽ không bao giờ được lấy về — hệ thống chạy, log sạch, mà không ai được
+ * chia gì. Tách ra thì mỗi nhóm có cửa sổ riêng: nhóm chưa gắn cờ luôn được xét,
+ * nhóm đã gắn cờ vẫn được thử lại để tự khỏi cờ khi admin lập chi nhánh.
+ */
+async function loadCandidateLeads(
+  orgId: string,
+  requirePhone: boolean,
+  take: number,
+  flagged: { tagId: string; has: boolean } | null,
+) {
   if (take <= 0) return [];
   return prisma.contact.findMany({
     where: {
@@ -83,10 +114,20 @@ async function loadCandidateLeads(orgId: string, requirePhone: boolean, take: nu
       ...(requirePhone ? { phoneNormalized: { not: null } } : {}),
       // Đã từng được chia rồi thì không chia lại, kể cả sau này bị gỡ chủ bằng tay.
       leadAssignments: { none: {} },
+      ...(flagged
+        ? {
+            // Tên quan hệ là tagAssignments, KHÔNG phải contactTags — Prisma chỉ nổ khi
+            // bộ lọc này thực sự được dùng, tức từ lần chạy thứ hai trở đi (lần đầu chưa
+            // có tag nên nhánh này bị bỏ qua).
+            tagAssignments: flagged.has
+              ? { some: { tagId: flagged.tagId, removedAt: null } }
+              : { none: { tagId: flagged.tagId, removedAt: null } },
+          }
+        : {}),
     },
     orderBy: { createdAt: 'asc' }, // FIFO — lead cũ không nằm mãi dưới đáy
     take,
-    select: { id: true, createdAt: true },
+    select: { id: true, createdAt: true, province: true },
   });
 }
 
@@ -106,7 +147,7 @@ async function loadPrimaries(orgId: string, config: PlannerConfig, now: Date): P
       userId: true,
       assignedAt: true,
       escalatedAt: true,
-      contact: { select: { status: true, statusRef: { select: { isTerminal: true } } } },
+      contact: { select: { status: true, province: true, statusRef: { select: { isTerminal: true } } } },
     },
   });
   if (rows.length === 0) return [];
@@ -143,6 +184,7 @@ async function loadPrimaries(orgId: string, config: PlannerConfig, now: Date): P
     }),
     hasRound2: hasRound2.has(r.contactId),
     accessUserIds: accessBy.get(r.contactId) ?? [],
+    province: r.contact.province,
   }));
 }
 
@@ -158,7 +200,7 @@ export async function runForOrg(
 ): Promise<RunSummary> {
   const dryRun = opts.dryRun ?? false;
   const now = opts.now ?? new Date();
-  const empty: Plan = { round1: [], round2: [], escalate: [] };
+  const empty: Plan = { round1: [], round2: [], escalate: [], noBranch: [], membersWithoutBranch: [] };
 
   return withTenant(orgId, async () => {
     const cfg = await prisma.leadDistributionConfig.findUnique({ where: { orgId } });
@@ -184,13 +226,28 @@ export async function runForOrg(
     }
 
     const budget = members.reduce((sum, m) => sum + Math.max(0, m.dailyQuota - m.assignedToday), 0);
-    const [leadRows, primaries] = await Promise.all([
-      loadCandidateLeads(orgId, cfg.requirePhone, budget),
+
+    // Tag cờ có thể chưa tồn tại (org chưa từng có lead treo) — khi đó không có gì
+    // để tách, mọi lead đều là "chưa gắn cờ".
+    const noBranchTag = await prisma.tag.findFirst({
+      where: { orgId, scope: 'crm', source: 'segment_rule', slug: NO_BRANCH_SLUG, zaloAccountId: null },
+      select: { id: true },
+    });
+
+    const [freshLeads, flaggedLeads, primaries] = await Promise.all([
+      loadCandidateLeads(orgId, cfg.requirePhone, budget, noBranchTag ? { tagId: noBranchTag.id, has: false } : null),
+      noBranchTag
+        ? loadCandidateLeads(orgId, cfg.requirePhone, budget, { tagId: noBranchTag.id, has: true })
+        : Promise.resolve([]),
       loadPrimaries(orgId, config, now),
     ]);
 
+    // Gộp rồi để planner tự sắp FIFO. Lead treo cũ hơn nên được ưu tiên — đúng, vì
+    // giờ chúng đã có chi nhánh nhận thì phải là những người chờ lâu nhất đi trước.
+    const leadRows = [...freshLeads, ...flaggedLeads];
+
     const plan = buildPlan({
-      leads: leadRows.map((c) => ({ contactId: c.id, createdAt: c.createdAt })),
+      leads: leadRows.map((c) => ({ contactId: c.id, createdAt: c.createdAt, province: c.province })),
       primaries,
       members,
       config,
@@ -226,13 +283,17 @@ export async function runAllOrgs(now = new Date()): Promise<RunSummary[]> {
  * cũ sẽ cùng quá hạn ngay lập tức và sáng hôm sau đồng loạt bị gắn thêm sale 2 —
  * đúng thứ đã cảnh báo trong spec §7.
  */
-export async function backfill(orgId: string, opts: { dryRun?: boolean } = {}): Promise<{ count: number }> {
+export async function backfill(
+  orgId: string,
+  opts: { dryRun?: boolean } = {},
+): Promise<{ count: number; provinceFilled: number }> {
   return withTenant(orgId, async () => {
+    const provinceFilled = await fillProvinceFromSource(orgId, opts.dryRun ?? false);
     const rows = await prisma.contact.findMany({
       where: { orgId, assignedUserId: { not: null }, mergedInto: null, leadAssignments: { none: {} } },
       select: { id: true, assignedUserId: true },
     });
-    if (opts.dryRun) return { count: rows.length };
+    if (opts.dryRun) return { count: rows.length, provinceFilled };
 
     const now = new Date();
     const data = rows
@@ -247,6 +308,34 @@ export async function backfill(orgId: string, opts: { dryRun?: boolean } = {}): 
       }));
     // skipDuplicates: chạy lại lần nữa không nổ vì @@unique([contactId, userId]).
     const res = await prisma.leadAssignment.createMany({ data, skipDuplicates: true });
-    return { count: res.count };
+    return { count: res.count, provinceFilled };
   });
+}
+
+/**
+ * Điền `Contact.province` cho khách nhập trước khi Apps Script biết gửi tỉnh.
+ *
+ * Tỉnh vẫn còn nguyên trong `source` dạng "khao-sat:Hà Nội" — cắt ra là xong. Không
+ * làm bước này thì toàn bộ khách cũ trở thành lead treo ngay ngày đầu bật chi nhánh,
+ * và admin sẽ tưởng tính năng hỏng.
+ *
+ * Chỉ đụng dòng `province IS NULL`: khách đã có tỉnh (nhập tay, sửa tay) không bị ghi đè.
+ */
+async function fillProvinceFromSource(orgId: string, dryRun: boolean): Promise<number> {
+  const rows = await prisma.contact.findMany({
+    where: { orgId, province: null, source: { startsWith: 'khao-sat:' } },
+    select: { id: true, source: true },
+  });
+  if (rows.length === 0) return 0;
+  if (dryRun) return rows.length;
+
+  let done = 0;
+  for (const r of rows) {
+    const tinh = (r.source ?? '').slice('khao-sat:'.length).trim();
+    if (!tinh) continue;
+    await prisma.contact.update({ where: { id: r.id }, data: { province: tinh } });
+    done++;
+  }
+  logger.info(`[lead-distribution] điền tỉnh cho ${done} khách cũ từ source`);
+  return done;
 }

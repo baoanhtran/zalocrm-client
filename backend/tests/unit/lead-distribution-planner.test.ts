@@ -18,13 +18,18 @@ const CFG: PlannerConfig = { dailyQuotaPerUser: 12, coAssignAfterDays: 14, escal
 const NOW = new Date('2026-08-19T00:00:00.000Z');
 const daysAgo = (n: number) => new Date(NOW.getTime() - n * 24 * 60 * 60 * 1000);
 
+// Mặc định mọi sale và mọi khách cùng một tỉnh: các test không nói về chi nhánh thì
+// hành vi phải y hệt như trước khi có chi nhánh. Test chi nhánh nằm ở describe riêng.
+const TINH = 'Hà Nội';
+
 function sale(userId: string, over: Partial<SaleMember> = {}): SaleMember {
-  return { userId, dailyQuota: 12, activeLoad: 0, assignedToday: 0, ...over };
+  return { userId, dailyQuota: 12, activeLoad: 0, assignedToday: 0, province: TINH, ...over };
 }
-function leads(n: number, from = 0): CandidateLead[] {
+function leads(n: number, from = 0, province: string | null = TINH): CandidateLead[] {
   return Array.from({ length: n }, (_, i) => ({
     contactId: `c${String(from + i).padStart(3, '0')}`,
     createdAt: new Date(NOW.getTime() - (n - i) * 60_000),
+    province,
   }));
 }
 function primary(over: Partial<PrimaryAssignment> = {}): PrimaryAssignment {
@@ -37,6 +42,7 @@ function primary(over: Partial<PrimaryAssignment> = {}): PrimaryAssignment {
     closed: false,
     hasRound2: false,
     accessUserIds: ['u1'],
+    province: TINH,
     ...over,
   };
 }
@@ -74,7 +80,7 @@ describe('isContactClosed', () => {
 
 describe('planRound1', () => {
   it('chia đều cho các sale khi tải bằng nhau', () => {
-    const out = planRound1(leads(6), [sale('u1'), sale('u2'), sale('u3')]);
+    const out = planRound1(leads(6), [sale('u1'), sale('u2'), sale('u3')]).assigned;
     const per = new Map<string, number>();
     for (const a of out) per.set(a.userId, (per.get(a.userId) ?? 0) + 1);
     expect(out).toHaveLength(6);
@@ -82,7 +88,7 @@ describe('planRound1', () => {
   });
 
   it('dừng đúng khi mọi người đầy hạn mức, lead dư để lại cho hôm sau', () => {
-    const out = planRound1(leads(50), [sale('u1', { dailyQuota: 2 }), sale('u2', { dailyQuota: 3 })]);
+    const out = planRound1(leads(50), [sale('u1', { dailyQuota: 2 }), sale('u2', { dailyQuota: 3 })]).assigned;
     expect(out).toHaveLength(5);
     expect(out.filter((a) => a.userId === 'u1')).toHaveLength(2);
     expect(out.filter((a) => a.userId === 'u2')).toHaveLength(3);
@@ -92,36 +98,36 @@ describe('planRound1', () => {
     const out = planRound1(leads(10), [
       sale('u1', { dailyQuota: 12, assignedToday: 12 }),
       sale('u2', { dailyQuota: 12, assignedToday: 10 }),
-    ]);
+    ]).assigned;
     expect(out).toHaveLength(2);
     expect(out.every((a) => a.userId === 'u2')).toBe(true);
   });
 
   it('hạn mức 0 thì không nhận lead nào', () => {
-    const out = planRound1(leads(5), [sale('u1', { dailyQuota: 0 }), sale('u2')]);
+    const out = planRound1(leads(5), [sale('u1', { dailyQuota: 0 }), sale('u2')]).assigned;
     expect(out.every((a) => a.userId === 'u2')).toBe(true);
   });
 
   it('ưu tiên người đang ôm ít khách nhất', () => {
-    const out = planRound1(leads(3), [sale('u1', { activeLoad: 50 }), sale('u2', { activeLoad: 0 })]);
+    const out = planRound1(leads(3), [sale('u1', { activeLoad: 50 }), sale('u2', { activeLoad: 0 })]).assigned;
     // u2 nhận 2 lead đầu để đuổi kịp, rồi mới tới lượt u1 khi hoà ở mức 50... không kịp,
     // nên cả 3 đều về u2.
     expect(out.map((a) => a.userId)).toEqual(['u2', 'u2', 'u2']);
   });
 
   it('lead cũ được chia trước (FIFO), không để lead nằm mãi dưới đáy', () => {
-    const old = { contactId: 'cu', createdAt: new Date('2026-01-01T00:00:00Z') };
-    const fresh = { contactId: 'cmoi', createdAt: new Date('2026-08-18T00:00:00Z') };
-    const out = planRound1([fresh, old], [sale('u1', { dailyQuota: 1 })]);
+    const old = { contactId: 'cu', createdAt: new Date('2026-01-01T00:00:00Z'), province: TINH };
+    const fresh = { contactId: 'cmoi', createdAt: new Date('2026-08-18T00:00:00Z'), province: TINH };
+    const out = planRound1([fresh, old], [sale('u1', { dailyQuota: 1 })]).assigned;
     expect(out).toEqual([{ contactId: 'cu', userId: 'u1' }]);
   });
 
   it('không có sale nào thì trả rỗng, không nổ', () => {
-    expect(planRound1(leads(5), [])).toEqual([]);
+    expect(planRound1(leads(5), []).assigned).toEqual([]);
   });
 
   it('không có lead nào thì trả rỗng', () => {
-    expect(planRound1([], [sale('u1')])).toEqual([]);
+    expect(planRound1([], [sale('u1')]).assigned).toEqual([]);
   });
 });
 
@@ -248,7 +254,7 @@ describe('buildPlan', () => {
   });
 
   it('hoà tải ở vòng 1 thì tie-break ổn định, kết quả cân bằng tuyệt đối trong sai số 1', () => {
-    const out = planRound1(leads(7), [sale('u1'), sale('u2'), sale('u3')]);
+    const out = planRound1(leads(7), [sale('u1'), sale('u2'), sale('u3')]).assigned;
     const per = new Map<string, number>();
     for (const a of out) per.set(a.userId, (per.get(a.userId) ?? 0) + 1);
     const counts = [...per.values()].sort();
@@ -258,7 +264,7 @@ describe('buildPlan', () => {
 
   it('org rỗng người, rỗng lead → kế hoạch rỗng, không nổ', () => {
     const plan = buildPlan({ leads: [], primaries: [], members: [], config: CFG, now: NOW });
-    expect(plan).toEqual({ round1: [], round2: [], escalate: [] });
+    expect(plan).toEqual({ round1: [], round2: [], escalate: [], noBranch: [], membersWithoutBranch: [] });
   });
 
   it('ba việc độc lập nhau: khách vừa tới hạn vòng 2 vừa quá hạn gắn cờ', () => {
@@ -271,5 +277,146 @@ describe('buildPlan', () => {
     });
     expect(plan.round2).toEqual([{ contactId: 'c1', userId: 'u2' }]);
     expect(plan.escalate).toEqual([{ assignmentId: 'a1', contactId: 'c1' }]);
+  });
+});
+
+describe('chia theo chi nhánh — khách tỉnh nào về sale tỉnh đó', () => {
+  const hn = () => sale('u-hn', { province: 'Hà Nội' });
+  const dn = () => sale('u-dn', { province: 'Đà Nẵng' });
+  const lead = (id: string, province: string | null, minsAgo = 1): CandidateLead => ({
+    contactId: id,
+    createdAt: new Date(NOW.getTime() - minsAgo * 60_000),
+    province,
+  });
+
+  it('khách Hà Nội về sale Hà Nội, khách Đà Nẵng về sale Đà Nẵng', () => {
+    const out = planRound1([lead('c1', 'Hà Nội'), lead('c2', 'Đà Nẵng')], [hn(), dn()]);
+    expect(out.assigned).toEqual([
+      { contactId: 'c1', userId: 'u-hn' },
+      { contactId: 'c2', userId: 'u-dn' },
+    ]);
+    expect(out.noBranch).toEqual([]);
+  });
+
+  it('sale rảnh hơn ở tỉnh KHÁC vẫn không được nhận — cân tải không vượt qua chi nhánh', () => {
+    // u-dn đang rảnh tuyệt đối, u-hn ôm 99 khách. Không có luật chi nhánh thì lead
+    // này về u-dn ngay.
+    const out = planRound1(
+      [lead('c1', 'Hà Nội')],
+      [sale('u-hn', { province: 'Hà Nội', activeLoad: 99 }), sale('u-dn', { province: 'Đà Nẵng', activeLoad: 0 })],
+    );
+    expect(out.assigned).toEqual([{ contactId: 'c1', userId: 'u-hn' }]);
+  });
+
+  it('trong cùng chi nhánh vẫn cân tải như cũ', () => {
+    const out = planRound1(
+      [lead('c1', 'Hà Nội', 3), lead('c2', 'Hà Nội', 2), lead('c3', 'Hà Nội', 1)],
+      [sale('a', { province: 'Hà Nội', activeLoad: 5 }), sale('b', { province: 'Hà Nội', activeLoad: 0 })],
+    );
+    expect(out.assigned.map((x) => x.userId)).toEqual(['b', 'b', 'b']);
+  });
+
+  it('tỉnh chưa lập chi nhánh → treo lại, KHÔNG chia bừa', () => {
+    const out = planRound1([lead('c1', 'Cần Thơ')], [hn(), dn()]);
+    expect(out.assigned).toEqual([]);
+    expect(out.noBranch).toEqual(['c1']);
+  });
+
+  it('khách không có tỉnh → treo lại', () => {
+    const out = planRound1([lead('c1', null)], [hn(), dn()]);
+    expect(out.assigned).toEqual([]);
+    expect(out.noBranch).toEqual(['c1']);
+  });
+
+  it('sale chưa xếp chi nhánh thì không nhận gì, kể cả khi là người duy nhất', () => {
+    const out = planRound1([lead('c1', 'Hà Nội')], [sale('u-lac', { province: null })]);
+    expect(out.assigned).toEqual([]);
+    expect(out.noBranch).toEqual(['c1']);
+  });
+
+  it('tên tỉnh lệch hoa/thường/dấu/tiền tố vẫn ghép đúng', () => {
+    const out = planRound1(
+      [lead('c1', 'TP. Hà Nội'), lead('c2', 'da nang')],
+      [sale('u-hn', { province: 'hà nội' }), sale('u-dn', { province: 'Đà Nẵng' })],
+    );
+    expect(out.assigned).toEqual([
+      { contactId: 'c1', userId: 'u-hn' },
+      { contactId: 'c2', userId: 'u-dn' },
+    ]);
+    expect(out.noBranch).toEqual([]);
+  });
+
+  it('chi nhánh hết hạn mức hôm nay KHÔNG bị gắn cờ — mai chia tiếp', () => {
+    // Khác hẳn "không có chi nhánh": gắn cờ ở đây thì ngày nào cũng đẻ ra một đống
+    // cờ giả và admin sẽ thôi nhìn vào chúng.
+    const out = planRound1([lead('c1', 'Hà Nội')], [sale('u-hn', { province: 'Hà Nội', dailyQuota: 0 })]);
+    expect(out.assigned).toEqual([]);
+    expect(out.noBranch).toEqual([]);
+  });
+
+  it('một chi nhánh đầy KHÔNG được chặn chi nhánh khác (bẫy break trong vòng FIFO)', () => {
+    // 2 lead Hà Nội cũ hơn đứng đầu hàng, chi nhánh HN đã hết hạn mức. Nếu vòng lặp
+    // break thay vì continue thì 2 lead Đà Nẵng phía sau chết theo, dù sale DN rảnh.
+    const out = planRound1(
+      [lead('h1', 'Hà Nội', 9), lead('h2', 'Hà Nội', 8), lead('d1', 'Đà Nẵng', 7), lead('d2', 'Đà Nẵng', 6)],
+      [sale('u-hn', { province: 'Hà Nội', dailyQuota: 0 }), sale('u-dn', { province: 'Đà Nẵng' })],
+    );
+    expect(out.assigned).toEqual([
+      { contactId: 'd1', userId: 'u-dn' },
+      { contactId: 'd2', userId: 'u-dn' },
+    ]);
+  });
+
+  it('buildPlan báo ra sale nào chưa được xếp chi nhánh', () => {
+    const plan = buildPlan({
+      leads: [],
+      primaries: [],
+      members: [hn(), sale('u-lac', { province: null }), sale('u-trong', { province: '   ' })],
+      config: CFG,
+      now: NOW,
+    });
+    expect(plan.membersWithoutBranch).toEqual(['u-lac', 'u-trong']);
+  });
+});
+
+describe('vòng 2 theo chi nhánh', () => {
+  it('sale chăm cùng phải cùng chi nhánh với khách', () => {
+    // Trước khi có chi nhánh, u-dn hoàn toàn có thể bị bốc vào chăm khách Hà Nội.
+    const out = planRound2(
+      [primary({ province: 'Hà Nội', userId: 'u-hn1', accessUserIds: ['u-hn1'] })],
+      [
+        sale('u-hn1', { province: 'Hà Nội' }),
+        // u-hn2 đang ôm nhiều hơn u-dn: nếu bỏ lọc chi nhánh thì cân tải sẽ chọn
+        // u-dn: test phải đỏ khi luật chi nhánh bị gỡ, nếu không nó chẳng chứng minh gì.
+        sale('u-hn2', { province: 'Hà Nội', activeLoad: 5 }),
+        sale('u-dn', { province: 'Đà Nẵng', activeLoad: 0 }),
+      ],
+      CFG,
+      NOW,
+      () => 0,
+    );
+    expect(out).toEqual([{ contactId: 'c1', userId: 'u-hn2' }]);
+  });
+
+  it('chi nhánh chỉ có đúng 1 sale thì không thêm ai, không nổ', () => {
+    const out = planRound2(
+      [primary({ province: 'Hà Nội', userId: 'u-hn1', accessUserIds: ['u-hn1'] })],
+      [sale('u-hn1', { province: 'Hà Nội' }), sale('u-dn', { province: 'Đà Nẵng' })],
+      CFG,
+      NOW,
+      () => 0,
+    );
+    expect(out).toEqual([]);
+  });
+
+  it('khách không có tỉnh thì không ghép thêm ai', () => {
+    const out = planRound2(
+      [primary({ province: null, userId: 'u-hn1', accessUserIds: ['u-hn1'] })],
+      [sale('u-hn1', { province: 'Hà Nội' }), sale('u-hn2', { province: 'Hà Nội' })],
+      CFG,
+      NOW,
+      () => 0,
+    );
+    expect(out).toEqual([]);
   });
 });

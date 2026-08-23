@@ -17,6 +17,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { prisma, tenantTransaction } from '../../shared/database/prisma-client.js';
+import { cleanProvince, provinceKey } from '../../shared/utils/province.js';
 
 export type DeptRole = 'leader' | 'deputy' | 'member';
 
@@ -27,6 +28,8 @@ export interface DepartmentNode {
   path: string;
   depth: number;
   displayOrder: number;
+  /** Tỉnh/thành phòng ban này phụ trách. null = không phải chi nhánh địa bàn. */
+  province: string | null;
   archivedAt: Date | null;
   memberCount: number;
   leaderUserId: string | null;
@@ -71,6 +74,7 @@ export async function getOrgDepartmentTree(orgId: string): Promise<DepartmentNod
       path: d.path,
       depth: d.depth,
       displayOrder: d.displayOrder,
+      province: d.province,
       archivedAt: d.archivedAt,
       memberCount: memberCount.get(d.id) ?? 0,
       leaderUserId: leader.get(d.id) ?? null,
@@ -111,11 +115,58 @@ export async function getDepartmentSubtree(orgId: string, deptId: string): Promi
   return subtree.map((d) => d.id);
 }
 
+/**
+ * Đổi lỗi trùng @@unique([orgId, province]) thành câu admin hiểu được.
+ *
+ * Không có hàm này thì UI hiện nguyên văn "Unique constraint failed on the fields:
+ * (`orgId`,`province`)" — admin sẽ tưởng hệ thống hỏng chứ không hiểu là tỉnh đó
+ * đã có chi nhánh khác nhận rồi.
+ */
+/**
+ * Chặn hai phòng ban cùng nhận một tỉnh khi CHỮ VIẾT khác nhau.
+ *
+ * @@unique([orgId, province]) chỉ so chuỗi thô nên "Hà Nội" và "hà nội" lọt qua như
+ * hai tỉnh khác nhau — trong khi branchOf() lại ghép bằng provinceKey() và sẽ thấy
+ * cả hai phòng ban đều nhận tỉnh đó, rồi chia khách sang cả hai. Ràng buộc DB vẫn
+ * giữ để chặn trùng y hệt; hàm này lo phần chữ viết lệch.
+ */
+async function assertProvinceFree(
+  tx: { department: { findMany: Function } },
+  orgId: string,
+  province: string | null,
+  selfId: string | null,
+): Promise<void> {
+  const key = provinceKey(province);
+  if (!key) return; // gỡ chi nhánh thì không có gì để trùng
+  const rows = await tx.department.findMany({
+    where: { orgId, archivedAt: null, province: { not: null } },
+    select: { id: true, name: true, province: true },
+  });
+  const clash = (rows as Array<{ id: string; name: string; province: string | null }>).find(
+    (d) => d.id !== selfId && provinceKey(d.province) === key,
+  );
+  if (clash) {
+    throw new Error(
+      `Tỉnh/thành này đã do phòng ban "${clash.name}" phụ trách (đang ghi "${clash.province}") — mỗi tỉnh chỉ được một chi nhánh`,
+    );
+  }
+}
+
+function rethrowProvinceConflict(err: unknown): never {
+  const e = err as { code?: string; meta?: { target?: unknown } };
+  const target = Array.isArray(e?.meta?.target) ? (e.meta.target as string[]).join(',') : String(e?.meta?.target ?? '');
+  if (e?.code === 'P2002' && target.includes('province')) {
+    throw new Error('Tỉnh/thành này đã có chi nhánh khác phụ trách — mỗi tỉnh chỉ được một chi nhánh');
+  }
+  throw err;
+}
+
 export async function createDepartment(input: {
   orgId: string;
   name: string;
   parentId: string | null;
   displayOrder?: number;
+  province?: string | null;
 }): Promise<{ id: string; name: string; path: string; depth: number }> {
   if (!input.name?.trim()) throw new Error('Tên phòng ban không được trống');
   if (input.name.length > 100) throw new Error('Tên phòng ban quá dài (>100 ký tự)');
@@ -141,6 +192,8 @@ export async function createDepartment(input: {
       depth = parent.depth + 1;
     }
 
+    await assertProvinceFree(tx, input.orgId, cleanProvince(input.province), null);
+
     const created = await tx.department.create({
       data: {
         id: newId,
@@ -148,13 +201,14 @@ export async function createDepartment(input: {
         name: input.name.trim(),
         parentId: input.parentId,
         displayOrder: input.displayOrder ?? 0,
+        province: cleanProvince(input.province),
         path,
         depth,
       },
       select: { id: true, name: true, path: true, depth: true },
     });
     return created;
-  });
+  }).catch(rethrowProvinceConflict);
 }
 
 export async function updateDepartment(input: {
@@ -163,6 +217,8 @@ export async function updateDepartment(input: {
   name?: string;
   parentId?: string | null;
   displayOrder?: number;
+  /** undefined = giữ nguyên; null = gỡ phòng ban khỏi vai trò chi nhánh. */
+  province?: string | null;
 }): Promise<{ id: string; name: string; path: string; depth: number }> {
   if (input.parentId === input.id) {
     throw new Error('Phòng ban không thể là con của chính nó');
@@ -183,6 +239,13 @@ export async function updateDepartment(input: {
     const data: Record<string, unknown> = {};
     if (input.name !== undefined) data.name = input.name.trim();
     if (input.displayOrder !== undefined) data.displayOrder = input.displayOrder;
+    // undefined phải khác null: PATCH không gửi province thì giữ nguyên, còn gửi
+    // null/'' là admin cố ý gỡ phòng ban khỏi vai trò chi nhánh.
+    if (input.province !== undefined) {
+      const next = cleanProvince(input.province);
+      await assertProvinceFree(tx, input.orgId, next, input.id);
+      data.province = next;
+    }
 
     // Move case: đổi parent → recompute path + cascade
     const movingParent = input.parentId !== undefined && input.parentId !== existing.parentId;
@@ -243,9 +306,17 @@ export async function updateDepartment(input: {
       select: { id: true, name: true, path: true, depth: true },
     });
     return updated;
-  });
+  }).catch(rethrowProvinceConflict);
 }
 
+/**
+ * Lưu trữ phòng ban. Đồng thời TRẢ LẠI tỉnh mà nó đang giữ.
+ *
+ * Ràng buộc @@unique([orgId, province]) không phân biệt phòng ban còn sống hay đã lưu
+ * trữ, nên nếu để nguyên province thì tỉnh đó bị khoá vĩnh viễn: lập lại chi nhánh cho
+ * chính tỉnh ấy sẽ đâm vào unique của một phòng ban không ai còn nhìn thấy nữa.
+ * (Prisma không khai được unique index có điều kiện, nên xử lý ở đây thay vì ở DB.)
+ */
 export async function archiveDepartment(orgId: string, id: string): Promise<void> {
   // FIX codex review #7: wrap count + archive trong 1 tx, lock dept row → tránh race.
   await tenantTransaction(async (tx) => {
@@ -268,7 +339,9 @@ export async function archiveDepartment(orgId: string, id: string): Promise<void
 
     await tx.department.update({
       where: { id },
-      data: { archivedAt: new Date() },
+      // province: null — xem chú thích ở đầu hàm, không trả tỉnh về thì tỉnh đó bị khoá
+      // vĩnh viễn bởi một phòng ban đã lưu trữ.
+      data: { archivedAt: new Date(), province: null },
     });
   });
 }

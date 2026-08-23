@@ -3208,6 +3208,11 @@ model Department {
   path         String
   depth        Int       @default(0) // 0 = root, max 4 (5 level total per anh chốt)
   displayOrder Int       @default(0) @map("display_order")
+  // Tỉnh/thành mà phòng ban này là chi nhánh. NULL = phòng ban thường, không nhận
+  // lead theo địa bàn. @@unique bên dưới chính là luật "mỗi tỉnh chỉ 1 chi nhánh",
+  // ép ở DB thay vì trông vào admin nhớ (Postgres coi các NULL là khác nhau nên
+  // vẫn có bao nhiêu phòng ban không-chi-nhánh cũng được).
+  province     String?
   archivedAt   DateTime? @map("archived_at")
   createdAt    DateTime  @default(now()) @map("created_at")
   updatedAt    DateTime  @updatedAt @map("updated_at")
@@ -3217,6 +3222,7 @@ model Department {
   children Department[]       @relation("DeptTree")
   members  DepartmentMember[]
 
+  @@unique([orgId, province])
   @@index([orgId, path])
   @@index([parentId])
   @@map("departments")

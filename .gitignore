@@ -53,3 +53,5 @@ public-key-telegram-product
 # Ảnh chụp/log của Playwright MCP
 .playwright-mcp/
 
+# Docs của superpowers
+docs/superpowers/

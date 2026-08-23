@@ -202,10 +202,10 @@
              vẫn gióng chính xác theo cột cha. (2026-06-04) -->
         <colgroup>
           <col style="width:26px">   <!-- 1 caret -->
-          <col style="width:188px">  <!-- 2 Tên (gộp avatar+tên, KHÔNG colspan) -->
+          <col style="width:158px">  <!-- 2 Tên (gộp avatar+tên, KHÔNG colspan) -->
           <col style="width:100px">  <!-- 3 SĐT -->
           <col style="width:68px">   <!-- 4 Tỉnh/Quận -->
-          <col style="width:54px">   <!-- 5 Nguồn -->
+          <col style="width:92px">   <!-- 5 Nguồn — đủ chỗ cho "khao-sat:<Tỉnh>" xuống 2 dòng -->
           <col style="width:72px">   <!-- 6 Trạng thái KH -->
           <col style="width:42px">   <!-- 7 Score -->
           <col style="width:112px">  <!-- 8 Nick chăm -->
@@ -213,10 +213,10 @@
           <!-- 2026-06-05 (Anh chốt) — giảm rộng 2 cột nhắn cuối ~30% + preview xuống 2 dòng.
                Trước: flex auto (~chiếm phần lớn không gian còn lại). Nay width cứng 150px
                (giảm ~30% so với ~210px auto @1366) → text wrap 2 dòng tận dụng dòng dưới. -->
-          <col style="width:150px">  <!-- 10 KH nhắn cuối -->
-          <col style="width:150px">  <!-- 11 Sale nhắn cuối -->
+          <col style="width:134px">  <!-- 10 KH nhắn cuối -->
+          <col style="width:134px">  <!-- 11 Sale nhắn cuối -->
           <col style="width:54px">   <!-- 12 Tin in/out -->
-          <col style="width:78px">   <!-- 13 Tags CRM -->
+          <col style="width:112px">  <!-- 13 Tags CRM — đủ chỗ cho nhãn tiếng Việt đầy đủ -->
           <col style="width:60px">   <!-- 14 Có Zalo? -->
           <col v-if="visibleChildCols.zaloUid" style="width:120px">
           <col v-if="visibleCols.zaloGlobalId" style="width:130px">
@@ -319,7 +319,7 @@
                 <span v-else class="empty">—</span>
               </td>
               <td class="c-src">
-                <span v-if="contact.source" class="chip chip-grey chip-ellipsis" :title="contact.source">{{ sourceLabel(contact.source) }}</span>
+                <span v-if="contact.source" class="chip chip-grey chip-wrap" :title="contact.source">{{ sourceLabel(contact.source) }}</span>
                 <span v-else class="empty">—</span>
               </td>
               <td>
@@ -416,7 +416,7 @@
               </td>
               <td class="c-tags">
                 <div class="tag-cell">
-                  <span v-for="tag in (contact.tags || []).slice(0, 2)" :key="tag" class="chip chip-grey chip-ellipsis" :title="tag">{{ tag }}</span>
+                  <span v-for="tag in (contact.tags || []).slice(0, 2)" :key="tag" class="chip chip-grey chip-wrap" :title="tag">{{ tag }}</span>
                   <span v-if="(contact.tags || []).length > 2" class="chip chip-grey" :title="(contact.tags || []).slice(2).join(', ')">
                     +{{ contact.tags.length - 2 }}
                   </span>
@@ -1987,17 +1987,23 @@ watch(
   font-size: 10.5px; font-weight: 500;
   white-space: nowrap;
 }
-/* Cột Nguồn chỉ rộng 54px vì được thiết kế cho mã ngắn (FB / TT / GT / CN), nhưng
-   source thật có thể dài ("khao-sat:Đà Nẵng", "phone_import"). Bảng dùng
-   table-layout:fixed và .chip là nowrap + không max-width → chip tràn khỏi ô và
-   VẼ ĐÈ lên cột Trạng thái bên cạnh. Cắt bằng ellipsis, giá trị đầy đủ ở tooltip.
-   Cần display:inline-block — text-overflow không áp lên inline-flex. */
+/* Nguồn và Tag có thể dài ("khao-sat:Đà Nẵng", "⏳ Chăm quá hạn") trong khi .chip
+   vốn nowrap, không max-width và bị rule TOÀN CỤC ép `height: 22px`. Hệ quả cũ:
+   chip tràn khỏi ô và vẽ đè lên cột bên cạnh (bảng dùng table-layout:fixed).
+   Cho chip xuống dòng thay vì cắt, để đọc được trọn nội dung:
+   - height:auto để thắng rule toàn cục, nếu không dòng thứ 2 bị xén mất
+   - display:inline-block, vì nowrap/wrap không áp đúng lên inline-flex
+   Hai cột này đã được nới rộng ở colgroup cho đủ chỗ. */
 .c-src, .c-tags { overflow: hidden; }
-.chip-ellipsis {
+.chip-wrap {
   display: inline-block;
   max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  height: auto;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+  padding: 3px 7px;
+  text-align: center;
   vertical-align: middle;
 }
 .chip-success { background: rgba(0,200,83,0.12); color: var(--success); }

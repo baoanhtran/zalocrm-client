@@ -4103,6 +4103,18 @@ model LeadDistributionMember {
   enabled    Boolean  @default(true)
   // null = dùng dailyQuotaPerUser của org.
   dailyQuota Int?     @map("daily_quota")
+  // Địa bàn ĐẶT RIÊNG, đè tỉnh của phòng ban. null = bám theo phòng ban.
+  //
+  // Sinh ra từ ca sếp-kiêm-sale: Department.userId là @unique (1 người ∈ 1 phòng ban)
+  // và Department province là @@unique (1 tỉnh ∈ 1 phòng ban), nên một trưởng phòng
+  // cấp trên vừa muốn nhận lead của một chi nhánh vừa muốn giữ ghế lãnh đạo thì không
+  // có ô nào trong sơ đồ tổ chức đặt vừa. Vị trí trong sơ đồ và địa bàn nhận lead là
+  // hai chuyện khác nhau — cột này tách chúng ra, y như dailyQuota ở trên tách hạn
+  // mức cá nhân khỏi mặc định org.
+  //
+  // Cố ý KHÔNG unique và KHÔNG có FK sang Department: giá trị ở đây do admin tự khai
+  // nên không dính vòng đời phòng ban (lưu trữ chi nhánh không xoá địa bàn của họ).
+  province   String?
   createdAt  DateTime @default(now()) @map("created_at")
   updatedAt  DateTime @updatedAt @map("updated_at")
 

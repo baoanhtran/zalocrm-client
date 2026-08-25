@@ -10,7 +10,7 @@
  * Spec: docs/superpowers/specs/2026-08-19-chia-lead-tu-dong-design.md
  */
 
-import { provinceKey } from '../../shared/utils/province.js';
+import { cleanProvince, provinceKey } from '../../shared/utils/province.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -27,8 +27,9 @@ export interface PlannerConfig {
 export interface SaleMember {
   userId: string;
   /**
-   * Tỉnh của chi nhánh sale này thuộc về (Department.province).
-   * null = chưa xếp vào chi nhánh nào → KHÔNG nhận lead nào, kể cả khi đang rảnh.
+   * Địa bàn của sale này, đã giải quyết xong bởi resolveProvince() — đặt riêng đè
+   * phòng ban. Planner không cần biết nó đến từ nguồn nào.
+   * null = chưa có địa bàn → KHÔNG nhận lead nào, kể cả khi đang rảnh.
    * Thà không chia còn hơn chia cho người ở tỉnh khác.
    */
   province: string | null;
@@ -116,6 +117,24 @@ export function isContactClosed(args: {
  */
 export function resolveQuota(memberQuota: number | null | undefined, orgDefault: number): number {
   return Math.max(0, memberQuota ?? orgDefault);
+}
+
+/**
+ * Địa bàn thực của một sale: địa bàn ĐẶT RIÊNG đè tỉnh suy từ phòng ban.
+ *
+ * Hai nguồn vì hai câu hỏi khác nhau. Phòng ban trả lời "người này ngồi ở đâu trong
+ * sơ đồ tổ chức", và với đại đa số sale thì đó cũng là địa bàn của họ. Địa bàn đặt
+ * riêng trả lời "người này nhận khách tỉnh nào" cho những ca hai thứ đó lệch nhau —
+ * điển hình là trưởng phòng cấp trên kiêm luôn việc chăm khách của một chi nhánh.
+ *
+ * Đi qua cleanProvince nên chuỗi rỗng (ô select bị xoá trắng gửi lên '') rơi về
+ * phòng ban thay vì thành một địa bàn tên rỗng không khớp với khách nào.
+ */
+export function resolveProvince(
+  memberProvince: string | null | undefined,
+  departmentProvince: string | null | undefined,
+): string | null {
+  return cleanProvince(memberProvince) ?? cleanProvince(departmentProvince);
 }
 
 /** Đã qua `days` ngày kể từ `since` tính tới `now` chưa. */

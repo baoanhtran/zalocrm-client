@@ -10,7 +10,8 @@ import { prisma } from '../../shared/database/prisma-client.js';
 import { authMiddleware } from '../auth/auth-middleware.js';
 import { requireGrant } from '../rbac/rbac-middleware.js';
 import { vnDayRange } from '../../shared/utils/vn-time.js';
-import { resolveQuota } from './planner.js';
+import { resolveProvince, resolveQuota } from './planner.js';
+import { cleanProvince, provinceKey } from '../../shared/utils/province.js';
 import { runForOrg, backfill } from './runner.js';
 
 const DEFAULTS = {
@@ -44,7 +45,7 @@ export async function leadDistributionRoutes(app: FastifyInstance): Promise<void
     const orgId = user.orgId;
     const cfg = await getOrCreateConfig(orgId);
 
-    const [users, members] = await Promise.all([
+    const [users, members, branches] = await Promise.all([
       prisma.user.findMany({
         where: { orgId, isActive: true },
         select: {
@@ -63,9 +64,32 @@ export async function leadDistributionRoutes(app: FastifyInstance): Promise<void
       }),
       prisma.leadDistributionMember.findMany({
         where: { orgId },
-        select: { userId: true, enabled: true, dailyQuota: true },
+        select: { userId: true, enabled: true, dailyQuota: true, province: true },
+      }),
+      // Các tỉnh THẬT SỰ có chi nhánh — nguồn duy nhất cho ô chọn địa bàn riêng.
+      // Không cho gõ tự do: gán ai đó vào một tỉnh không chi nhánh nào nhận thì họ
+      // ngồi không mà màn hình chẳng có dấu hiệu gì báo sai.
+      prisma.department.findMany({
+        where: { orgId, archivedAt: null, province: { not: null } },
+        select: { province: true },
+        orderBy: { province: 'asc' },
       }),
     ]);
+
+    // Danh sách cho ô chọn: các tỉnh có chi nhánh, CỘNG các địa bàn đang được đặt
+    // riêng. Vế sau để chi nhánh bị lưu trữ không làm ô chọn mất giá trị hiện tại —
+    // v-select không tìm thấy value trong items sẽ hiện trống, và lần lưu kế tiếp
+    // âm thầm xoá mất địa bàn của người đó.
+    const provinceSet = new Map<string, string>();
+    for (const d of branches) {
+      if (d.province) provinceSet.set(provinceKey(d.province), d.province);
+    }
+    for (const m of members) {
+      if (m.province && !provinceSet.has(provinceKey(m.province))) {
+        provinceSet.set(provinceKey(m.province), m.province);
+      }
+    }
+    const branchProvinces = [...provinceSet.values()].sort((a, b) => a.localeCompare(b, 'vi'));
 
     const { today } = vnDayRange();
     const [loadRows, todayRows] = await Promise.all([
@@ -92,17 +116,23 @@ export async function leadDistributionRoutes(app: FastifyInstance): Promise<void
 
     return reply.send({
       config: cfg,
+      branchProvinces,
       members: users.map((u) => {
         const m = memberBy.get(u.id);
         const dept = u.departmentMember?.department;
         const branch = dept && !dept.archivedAt && dept.province ? dept : null;
+        const departmentProvince = branch?.province ?? null;
         return {
           userId: u.id,
           fullName: u.fullName,
           email: u.email,
           role: u.role,
           departmentName: dept?.name ?? null,
-          province: branch?.province ?? null,
+          // Ba trường tách bạch để FE hiện được "vì sao địa bàn lại là tỉnh này":
+          // suy từ phòng ban, do admin đặt tay, và cái cuối cùng có hiệu lực.
+          departmentProvince,
+          provinceOverride: m?.province ?? null,
+          province: resolveProvince(m?.province, departmentProvince),
           // Chưa có bản ghi = chưa được admin tick vào vòng chia.
           inPool: !!m?.enabled,
           dailyQuota: m?.dailyQuota ?? null,
@@ -141,7 +171,12 @@ export async function leadDistributionRoutes(app: FastifyInstance): Promise<void
     const user = (request as any).user;
     const orgId = user.orgId;
     const body = (request.body ?? {}) as {
-      members?: Array<{ userId: string; inPool: boolean; dailyQuota?: number | null }>;
+      members?: Array<{
+        userId: string;
+        inPool: boolean;
+        dailyQuota?: number | null;
+        province?: string | null;
+      }>;
     };
     if (!Array.isArray(body.members)) {
       return reply.status(400).send({ error: 'Thiếu mảng members' });
@@ -158,15 +193,68 @@ export async function leadDistributionRoutes(app: FastifyInstance): Promise<void
       return reply.status(400).send({ error: 'User không thuộc org hoặc đã khoá', rejected });
     }
 
+    // Địa bàn đặt riêng phải trỏ tới một chi nhánh có thật, nếu không người đó vào
+    // vòng chia rồi ngồi không vĩnh viễn mà không có lỗi nào nổi lên. Đối chiếu bằng
+    // provinceKey để "hà nội" admin gõ vẫn nhận ra chi nhánh "Hà Nội", rồi LƯU lại
+    // đúng chính tả của chi nhánh — hai cách viết cùng một tỉnh trong DB là mầm cho
+    // đúng loại lệch dữ liệu mà provinceKey sinh ra để dập.
+    const [branches, existing] = await Promise.all([
+      prisma.department.findMany({
+        where: { orgId, archivedAt: null, province: { not: null } },
+        select: { province: true },
+      }),
+      prisma.leadDistributionMember.findMany({
+        where: { orgId },
+        select: { userId: true, province: true },
+      }),
+    ]);
+    const canonicalByKey = new Map<string, string>();
+    for (const b of branches) {
+      if (b.province) canonicalByKey.set(provinceKey(b.province), b.province);
+    }
+    const currentBy = new Map(existing.map((e) => [e.userId, e.province]));
+
+    const resolvedProvince = new Map<string, string | null>();
+    const badProvince: string[] = [];
+    for (const m of body.members) {
+      const raw = cleanProvince(m.province);
+      if (!raw) {
+        resolvedProvince.set(m.userId, null); // bỏ trống = bám theo phòng ban
+        continue;
+      }
+      const canonical = canonicalByKey.get(provinceKey(raw));
+      if (canonical) {
+        resolvedProvince.set(m.userId, canonical);
+        continue;
+      }
+      // Không khớp chi nhánh nào NHƯNG đúng bằng giá trị đang lưu của chính người này:
+      // giữ nguyên. Xảy ra khi admin lưu trữ một chi nhánh — địa bàn đặt riêng cố ý
+      // không dính vòng đời phòng ban, nên nó không được phép biến việc lưu trang này
+      // thành bất khả thi cho tới khi có người đi dọn tay.
+      const cur = currentBy.get(m.userId);
+      if (cur && provinceKey(cur) === provinceKey(raw)) {
+        resolvedProvince.set(m.userId, cur);
+        continue;
+      }
+      badProvince.push(raw);
+    }
+    if (badProvince.length) {
+      return reply.status(400).send({
+        error: 'Địa bàn riêng phải là tỉnh đã có chi nhánh',
+        rejected: badProvince,
+      });
+    }
+
     for (const m of body.members) {
       const quota =
         m.dailyQuota === null || m.dailyQuota === undefined
           ? null
           : clampInt(m.dailyQuota, 0, 500, 0);
+      const province = resolvedProvince.get(m.userId) ?? null;
       await prisma.leadDistributionMember.upsert({
         where: { orgId_userId: { orgId, userId: m.userId } },
-        update: { enabled: m.inPool, dailyQuota: quota },
-        create: { orgId, userId: m.userId, enabled: m.inPool, dailyQuota: quota },
+        update: { enabled: m.inPool, dailyQuota: quota, province },
+        create: { orgId, userId: m.userId, enabled: m.inPool, dailyQuota: quota, province },
       });
     }
     return reply.send({ ok: true, updated: body.members.length });

@@ -7,6 +7,7 @@ import {
   planEscalations,
   buildPlan,
   isContactClosed,
+  resolveProvince,
   resolveQuota,
   type SaleMember,
   type CandidateLead,
@@ -60,6 +61,76 @@ describe('resolveQuota', () => {
   });
   it('số âm bị kẹp về 0', () => {
     expect(resolveQuota(-3, 12)).toBe(0);
+  });
+});
+
+describe('resolveProvince — địa bàn riêng đè phòng ban', () => {
+  it('không đặt riêng thì bám theo phòng ban', () => {
+    expect(resolveProvince(null, 'Hà Nội')).toBe('Hà Nội');
+    expect(resolveProvince(undefined, 'Hà Nội')).toBe('Hà Nội');
+  });
+  it('có đặt riêng thì lấy đặt riêng', () => {
+    expect(resolveProvince('Hà Nội', null)).toBe('Hà Nội');
+  });
+  // Ca Gia Linh: trưởng Ban Lãnh Đạo (phòng ban không khai tỉnh) nhưng làm việc ở
+  // địa bàn Hà Nội. Không có dòng này thì cô ấy tick nhận lead xong ngồi không.
+  it('đặt riêng thắng cả khi phòng ban có tỉnh khác', () => {
+    expect(resolveProvince('Hà Nội', 'Hải Phòng')).toBe('Hà Nội');
+  });
+  it('bỏ đặt riêng thì quay về bám phòng ban', () => {
+    expect(resolveProvince(null, 'Hải Phòng')).toBe('Hải Phòng');
+  });
+  it('cả hai đều trống = không có địa bàn', () => {
+    expect(resolveProvince(null, null)).toBeNull();
+  });
+  // Ô select bị xoá trắng gửi lên '' chứ không phải null. Coi '' là một địa bàn thì
+  // nó không khớp tỉnh nào và người đó im lặng rơi khỏi mọi vòng chia.
+  it('chuỗi rỗng/toàn khoảng trắng rơi về phòng ban, không thành địa bàn rỗng', () => {
+    expect(resolveProvince('', 'Hà Nội')).toBe('Hà Nội');
+    expect(resolveProvince('   ', 'Hà Nội')).toBe('Hà Nội');
+    expect(resolveProvince('  ', null)).toBeNull();
+  });
+});
+
+// Kịch bản thật của BMA: Gia Linh là sếp kiêm sale, địa bàn riêng Hà Nội, hạn mức
+// thấp; hai sale chi nhánh Hà Nội hạn mức thường. Kiểm đúng những gì đã hứa với
+// người dùng — cùng rổ, hạn mức tự chặn, cân theo số khách đang ôm.
+describe('sếp kiêm sale bằng địa bàn riêng', () => {
+  const giaLinh = () => sale('gia-linh', {
+    province: resolveProvince('Hà Nội', null)!, // phòng ban Ban Lãnh Đạo không khai tỉnh
+    dailyQuota: 2,
+  });
+
+  it('vào chung rổ với sale chi nhánh và nhận được lead Hà Nội', () => {
+    const out = planRound1(leads(1), [giaLinh()]);
+    expect(out.assigned).toEqual([{ contactId: 'c000', userId: 'gia-linh' }]);
+    expect(out.noBranch).toEqual([]);
+  });
+
+  it('hạn mức riêng tự chặn, phần còn lại chảy về sale chi nhánh', () => {
+    const out = planRound1(leads(10), [giaLinh(), sale('sale-hn1'), sale('sale-hn2')]);
+    const cho = (u: string) => out.assigned.filter((a) => a.userId === u).length;
+    expect(cho('gia-linh')).toBe(2);
+    expect(cho('sale-hn1') + cho('sale-hn2')).toBe(8);
+  });
+
+  it('đang ôm nhiều khách cũ thì vòng chia tự né', () => {
+    // Gia Linh rảnh hơn → nhận.
+    const out = planRound1(leads(1), [giaLinh(), sale('sale-hn1', { activeLoad: 3 })]);
+    expect(out.assigned[0].userId).toBe('gia-linh');
+
+    // Đảo ngược tải thì phải sang người kia, dù hạn mức của cô ấy vẫn còn.
+    const out2 = planRound1(leads(1), [
+      sale('gia-linh', { province: 'Hà Nội', dailyQuota: 2, activeLoad: 9 }),
+      sale('sale-hn1', { activeLoad: 3 }),
+    ]);
+    expect(out2.assigned[0].userId).toBe('sale-hn1');
+  });
+
+  it('không lấn sang tỉnh khác', () => {
+    const out = planRound1(leads(2, 0, 'Hải Phòng'), [giaLinh()]);
+    expect(out.assigned).toEqual([]);
+    expect(out.noBranch).toEqual(['c000', 'c001']);
   });
 });
 

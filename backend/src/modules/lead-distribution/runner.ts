@@ -10,7 +10,7 @@ import { prisma } from '../../shared/database/prisma-client.js';
 import { logger } from '../../shared/utils/logger.js';
 import { withTenant } from '../../shared/tenant/tenant-context.js';
 import { vnDayRange } from '../../shared/utils/vn-time.js';
-import { buildPlan, isContactClosed, resolveQuota, type Plan, type PlannerConfig, type PrimaryAssignment, type SaleMember } from './planner.js';
+import { buildPlan, isContactClosed, resolveProvince, resolveQuota, type Plan, type PlannerConfig, type PrimaryAssignment, type SaleMember } from './planner.js';
 import { executePlan, NO_BRANCH_SLUG, type ExecuteResult } from './executor.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -41,7 +41,9 @@ async function loadMembers(orgId: string, config: PlannerConfig): Promise<SaleMe
     select: {
       userId: true,
       dailyQuota: true,
-      // Chi nhánh của sale = phòng ban họ thuộc về, miễn phòng ban đó có khai tỉnh.
+      // Địa bàn đặt riêng — đè phòng ban khi có. Xem resolveProvince().
+      province: true,
+      // Mặc định: chi nhánh của sale = phòng ban họ thuộc về, miễn phòng ban đó có khai tỉnh.
       user: {
         select: {
           departmentMember: {
@@ -79,8 +81,9 @@ async function loadMembers(orgId: string, config: PlannerConfig): Promise<SaleMe
     return {
       userId: m.userId,
       // Phòng ban đã lưu trữ thì coi như sale không còn chi nhánh — nhận lead theo một
-      // chi nhánh đã đóng thì khách rơi vào vùng không ai chịu trách nhiệm.
-      province: dept && !dept.archivedAt ? dept.province : null,
+      // chi nhánh đã đóng thì khách rơi vào vùng không ai chịu trách nhiệm. Địa bàn đặt
+      // riêng KHÔNG dính luật này: nó do admin tự khai nên không phụ thuộc phòng ban nào.
+      province: resolveProvince(m.province, dept && !dept.archivedAt ? dept.province : null),
       dailyQuota: resolveQuota(m.dailyQuota, config.dailyQuotaPerUser),
       activeLoad: loadBy.get(m.userId) ?? 0,
       assignedToday: todayBy.get(m.userId) ?? 0,

@@ -89,7 +89,7 @@
               <tr>
                 <th style="width: 88px">Nhận lead</th>
                 <th>Sale</th>
-                <th style="width: 160px">Chi nhánh</th>
+                <th style="width: 210px">Chi nhánh</th>
                 <th style="width: 150px">Hạn mức riêng</th>
                 <th style="width: 120px">Đang ôm</th>
                 <th style="width: 120px">Hôm nay</th>
@@ -105,10 +105,14 @@
                   <div class="ld-email">{{ m.email }}</div>
                 </td>
                 <td>
-                  <span v-if="m.province" class="ld-branch">{{ m.province }}</span>
-                  <span v-else class="ld-branch ld-branch-missing" title="Vào Cài đặt › Phòng ban để khai tỉnh cho phòng ban của nhân viên này">
-                    chưa có
-                  </span>
+                  <!-- Bỏ trống = bám theo phòng ban (đúng với gần như mọi sale). Chọn một
+                       tỉnh = đặt riêng, đè phòng ban — dành cho ca sếp kiêm sale, người
+                       không nằm vừa ô nào trong sơ đồ tổ chức. -->
+                  <v-select v-model="m.provinceOverride" :items="branchProvinces" clearable
+                    :placeholder="branchPlaceholder(m)" density="compact" variant="outlined"
+                    hide-details :disabled="!canEdit || !m.inPool"
+                    no-data-text="Chưa có chi nhánh nào — khai tỉnh cho phòng ban trước" />
+                  <div v-if="branchNote(m)" class="ld-branch-note">{{ branchNote(m) }}</div>
                 </td>
                 <td>
                   <v-text-field v-model.number="m.dailyQuota" type="number" :min="0" :max="500"
@@ -125,10 +129,13 @@
           class="ld-alert" style="margin-top: 10px">
           {{ poolWithoutBranch.length }} nhân viên đang bật nhận lead nhưng chưa có chi nhánh:
           <strong>{{ poolWithoutBranch.join(', ') }}</strong>.
-          Họ sẽ không được chia khách nào cho tới khi phòng ban của họ được khai tỉnh ở
-          Cài đặt › Phân quyền › Phòng ban.
+          Họ sẽ không được chia khách nào cho tới khi khai tỉnh cho phòng ban của họ ở
+          Cài đặt › Phân quyền › Phòng ban, hoặc chọn thẳng một tỉnh ở cột Chi nhánh.
         </v-alert>
         <p class="ld-hint" style="margin-top: 10px">
+          Cột Chi nhánh bỏ trống = lấy theo phòng ban của nhân viên. Chọn một tỉnh khi
+          người đó làm việc ở địa bàn khác với vị trí trong sơ đồ tổ chức — ví dụ trưởng
+          phòng cấp trên kiêm chăm khách của một chi nhánh.
           Bỏ trống hạn mức riêng = dùng mức chung ở trên. “Đang ôm” là số khách chưa chốt.
           Khách chỉ được chia cho nhân viên cùng tỉnh — khách tỉnh chưa có chi nhánh sẽ được
           gắn nhãn “📍 Chưa có chi nhánh” và chờ, không chia bừa sang tỉnh khác.
@@ -193,8 +200,14 @@ const auth = useAuthStore();
 
 interface MemberRow {
   userId: string; fullName: string | null; email: string; role: string;
-  /** Tỉnh của chi nhánh (Department.province). null = chưa xếp chi nhánh → không nhận lead. */
-  province: string | null; departmentName: string | null;
+  departmentName: string | null;
+  /** Tỉnh suy từ phòng ban (Department.province). null = phòng ban không phải chi nhánh. */
+  departmentProvince: string | null;
+  /** Địa bàn admin đặt tay, đè phòng ban. null = bám theo phòng ban. */
+  provinceOverride: string | null;
+  // API còn trả `province` (địa bàn có hiệu lực) nhưng cố ý KHÔNG khai ở đây: nó chỉ
+  // đúng tới lần tải gần nhất, còn màn hình thì đổi theo từng thao tác của admin.
+  // Dùng effectiveProvince() để hai thứ không bao giờ lệch nhau.
   inPool: boolean; dailyQuota: number | null; effectiveQuota: number;
   activeLoad: number; assignedToday: number;
 }
@@ -221,7 +234,30 @@ const DEFAULTS: ConfigForm = {
 const form = reactive<ConfigForm>({ ...DEFAULTS });
 const saved = reactive<ConfigForm>({ ...DEFAULTS });
 const members = ref<MemberRow[]>([]);
+const branchProvinces = ref<string[]>([]);
 let savedMembers = '';
+
+/** Địa bàn có hiệu lực, tính lại tại chỗ theo đúng luật của backend (resolveProvince). */
+function effectiveProvince(m: MemberRow): string | null {
+  return (m.provinceOverride || '').trim() || m.departmentProvince || null;
+}
+function branchPlaceholder(m: MemberRow): string {
+  return m.departmentProvince ? `Theo phòng ban (${m.departmentProvince})` : 'chưa có';
+}
+const sameProvince = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+/**
+ * Khi địa bàn đặt riêng khác tỉnh của phòng ban, nói thẳng ra cả hai. Đây là chỗ dễ
+ * gây bất ngờ nhất: ai đó chuyển phòng ban cho nhân viên rồi không hiểu vì sao lead
+ * vẫn về tỉnh cũ. Câu này biến nó thành hiển nhiên thay vì thành một cuộc điều tra.
+ */
+function branchNote(m: MemberRow): string | null {
+  const over = (m.provinceOverride || '').trim();
+  if (!over) return null;
+  if (m.departmentProvince && !sameProvince(over, m.departmentProvince)) {
+    return `Đặt riêng — phòng ban: ${m.departmentProvince}`;
+  }
+  return 'Đặt riêng';
+}
 
 const canEdit = computed(() => ['owner', 'admin'].includes(auth.user?.role ?? ''));
 
@@ -231,7 +267,7 @@ const estimatedDaily = computed(
 // Bật nhận lead mà không có chi nhánh là cấu hình chết lặng: người đó không bao giờ
 // được chia gì và không có lỗi nào nổi lên. Nói thẳng ra ở đây.
 const poolWithoutBranch = computed(() =>
-  members.value.filter((m) => m.inPool && !m.province).map((m) => m.fullName || m.email),
+  members.value.filter((m) => m.inPool && !effectiveProvince(m)).map((m) => m.fullName || m.email),
 );
 // Mốc gắn cờ sớm hơn mốc thêm sale 2 là cấu hình mâu thuẫn — backend vẫn chạy được
 // (hai việc độc lập) nhưng kết quả vô nghĩa với người dùng, nên cảnh báo tại chỗ.
@@ -245,7 +281,12 @@ const nothingToDo = computed(() => {
 
 function membersFingerprint(): string {
   return JSON.stringify(
-    members.value.map((m) => [m.userId, m.inPool, m.dailyQuota === null ? null : Number(m.dailyQuota)]),
+    members.value.map((m) => [
+      m.userId,
+      m.inPool,
+      m.dailyQuota === null ? null : Number(m.dailyQuota),
+      m.provinceOverride || null,
+    ]),
   );
 }
 const dirty = computed(
@@ -264,6 +305,7 @@ async function load() {
     Object.assign(form, data.config);
     Object.assign(saved, data.config);
     members.value = (data.members ?? []).map((m: MemberRow) => ({ ...m }));
+    branchProvinces.value = data.branchProvinces ?? [];
     savedMembers = membersFingerprint();
   } catch {
     toast.error('Không tải được cài đặt chia lead');
@@ -289,6 +331,9 @@ async function save() {
         dailyQuota: m.dailyQuota === null || m.dailyQuota === undefined || (m.dailyQuota as unknown) === ''
           ? null
           : Number(m.dailyQuota),
+        // v-select clearable trả null, nhưng gửi '' cũng an toàn: backend coi cả hai
+        // là "bám theo phòng ban" chứ không phải một địa bàn tên rỗng.
+        province: m.provinceOverride || null,
       })),
     });
     toast.success('Đã lưu cài đặt chia lead');
@@ -382,11 +427,7 @@ onMounted(load);
 .ld-table td { padding: 8px 10px; border-bottom: 1px solid #F3F4F6; vertical-align: middle; }
 .ld-name { font-weight: 600; color: #111827; }
 .ld-email { font-size: 11.5px; color: #9CA3AF; }
-.ld-branch {
-  display: inline-block; padding: 2px 8px; border-radius: 10px;
-  font-size: 12px; background: #EEF2FF; color: #3730A3; white-space: nowrap;
-}
-.ld-branch-missing { background: #FEF3C7; color: #92400E; font-style: italic; }
+.ld-branch-note { margin-top: 4px; font-size: 11.5px; color: #6366F1; white-space: nowrap; }
 .ld-num { font-variant-numeric: tabular-nums; color: #374151; }
 .ld-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; margin: 18px 0 6px; }
 .ld-noperm { font-size: 12.5px; color: #9CA3AF; margin-right: auto; }

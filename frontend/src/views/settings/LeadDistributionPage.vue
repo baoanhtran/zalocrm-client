@@ -89,7 +89,7 @@
               <tr>
                 <th style="width: 88px">Nhận lead</th>
                 <th>Sale</th>
-                <th style="width: 210px">Chi nhánh</th>
+                <th style="width: 230px">Chi nhánh</th>
                 <th style="width: 150px">Hạn mức riêng</th>
                 <th style="width: 120px">Đang ôm</th>
                 <th style="width: 120px">Hôm nay</th>
@@ -112,7 +112,8 @@
                     :placeholder="branchPlaceholder(m)" density="compact" variant="outlined"
                     hide-details :disabled="!canEdit || !m.inPool"
                     no-data-text="Chưa có chi nhánh nào — khai tỉnh cho phòng ban trước" />
-                  <div v-if="branchNote(m)" class="ld-branch-note">{{ branchNote(m) }}</div>
+                  <div v-if="branchNote(m)" class="ld-branch-note"
+                    :class="{ 'ld-branch-rieng': branchNote(m)!.rieng }">{{ branchNote(m)!.text }}</div>
                 </td>
                 <td>
                   <v-text-field v-model.number="m.dailyQuota" type="number" :min="0" :max="500"
@@ -241,22 +242,27 @@ let savedMembers = '';
 function effectiveProvince(m: MemberRow): string | null {
   return (m.provinceOverride || '').trim() || m.departmentProvince || null;
 }
+// Vùng chữ trong ô select chỉ rộng ~150px nên placeholder chỉ đựng vừa tên tỉnh.
+// Lời giải thích ("theo phòng ban" / "đặt riêng") đẩy xuống dòng chú thích bên dưới,
+// nơi có cả chiều ngang lẫn quyền xuống dòng.
 function branchPlaceholder(m: MemberRow): string {
-  return m.departmentProvince ? `Theo phòng ban (${m.departmentProvince})` : 'chưa có';
+  return m.departmentProvince ?? 'chưa có';
 }
 const sameProvince = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
 /**
- * Khi địa bàn đặt riêng khác tỉnh của phòng ban, nói thẳng ra cả hai. Đây là chỗ dễ
- * gây bất ngờ nhất: ai đó chuyển phòng ban cho nhân viên rồi không hiểu vì sao lead
- * vẫn về tỉnh cũ. Câu này biến nó thành hiển nhiên thay vì thành một cuộc điều tra.
+ * Dòng dưới ô chọn: nguồn của địa bàn đang hiển thị.
+ *
+ * Không có nó thì placeholder "Hà Nội" trông y hệt một giá trị đã chọn. Riêng khi địa
+ * bàn đặt riêng khác tỉnh của phòng ban thì nói thẳng ra cả hai — đó là chỗ dễ gây bất
+ * ngờ nhất: ai đó chuyển phòng ban cho nhân viên rồi không hiểu vì sao lead vẫn về tỉnh cũ.
  */
-function branchNote(m: MemberRow): string | null {
+function branchNote(m: MemberRow): { text: string; rieng: boolean } | null {
   const over = (m.provinceOverride || '').trim();
-  if (!over) return null;
+  if (!over) return m.departmentProvince ? { text: 'theo phòng ban', rieng: false } : null;
   if (m.departmentProvince && !sameProvince(over, m.departmentProvince)) {
-    return `Đặt riêng — phòng ban: ${m.departmentProvince}`;
+    return { text: `đặt riêng — phòng ban: ${m.departmentProvince}`, rieng: true };
   }
-  return 'Đặt riêng';
+  return { text: 'đặt riêng', rieng: true };
 }
 
 const canEdit = computed(() => ['owner', 'admin'].includes(auth.user?.role ?? ''));
@@ -416,6 +422,10 @@ onMounted(load);
 .ld-row-desc { font-size: 12.5px; color: #6B7280; margin-top: 3px; line-height: 1.5; }
 .ld-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 18px; }
 .ld-field { display: flex; flex-direction: column; gap: 6px; }
+/* Vuetify đặt `.v-input { flex: 1 1 auto }`. Ô lưới bị kéo cao bằng nhau, nên ô nào có
+   dòng chú thích ngắn hơn một dòng là dư chỗ, và cái input nuốt luôn chỗ dư — ba ô cùng
+   density mà cao 40/57/40px. Ghim về chiều cao tự nhiên thì chỗ dư rơi xuống đáy ô. */
+.ld-field > .v-input { flex: 0 0 auto; }
 .ld-label { font-size: 13px; font-weight: 600; color: #374151; }
 .ld-hint { font-size: 12px; color: #9CA3AF; line-height: 1.45; margin: 0; }
 .ld-warn { display: flex; gap: 10px; align-items: flex-start; margin-top: 16px; padding: 10px 12px;
@@ -427,7 +437,9 @@ onMounted(load);
 .ld-table td { padding: 8px 10px; border-bottom: 1px solid #F3F4F6; vertical-align: middle; }
 .ld-name { font-weight: 600; color: #111827; }
 .ld-email { font-size: 11.5px; color: #9CA3AF; }
-.ld-branch-note { margin-top: 4px; font-size: 11.5px; color: #6366F1; white-space: nowrap; }
+/* Cho xuống dòng: "đặt riêng — phòng ban: Đà Nẵng" dài hơn bề ngang cột. */
+.ld-branch-note { margin-top: 4px; font-size: 11.5px; line-height: 1.35; color: #9CA3AF; }
+.ld-branch-rieng { color: #6366F1; font-weight: 600; }
 .ld-num { font-variant-numeric: tabular-nums; color: #374151; }
 .ld-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; margin: 18px 0 6px; }
 .ld-noperm { font-size: 12.5px; color: #9CA3AF; margin-right: auto; }

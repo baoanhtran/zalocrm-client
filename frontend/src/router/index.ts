@@ -152,7 +152,9 @@ const routes: RouteRecordRaw[] = [
       { path: 'crm/lead-distribution', name: 'Settings.LeadDistribution', component: () => import('@/views/settings/LeadDistributionPage.vue'), meta: { resource: 'settings' } },
       { path: 'crm/stuck',       name: 'Settings.Stuck',       component: () => import('@/views/settings/SettingsComingSoon.vue'), props: { feature: 'stuck' }, meta: { resource: 'settings' } },
       { path: 'crm/folders',     name: 'Settings.Folders',     component: () => import('@/views/settings/SettingsComingSoon.vue'), props: { feature: 'folders' }, meta: { resource: 'settings' } },
-      { path: 'crm/templates',   name: 'Settings.Templates',   component: () => import('@/views/settings/SettingsComingSoon.vue'), props: { feature: 'templates' }, meta: { resource: 'settings' } },
+      // Mẫu tin nhắn: gate resource 'block' CHỨ KHÔNG 'settings' — sale phải vào được
+      // để tự quản mẫu riêng của mình; đăng mẫu công khai mới cần thêm block.create.
+      { path: 'crm/templates',   name: 'Settings.Templates',   component: () => import('@/views/settings/MessageTemplatesPage.vue'), meta: { resource: 'block' } },
       // Lead Pool routes → extension bundle (eeSettingsChildren).
       // M53 2026-05-30 — Trợ Lý AI Virtual Chat
       { path: 'crm/ai-assistant',      name: 'Settings.AiAssistant',     component: () => import('@/views/settings/AiAssistantPage.vue'), meta: { resource: 'settings' } },

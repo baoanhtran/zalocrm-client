@@ -2671,13 +2671,22 @@ const showTemplatePopup = ref(false);
 const templateQuery = ref('');
 const templates = ref<TemplateItem[]>([]);
 
-async function loadTemplates() {
+// Nạp lúc mount là chưa đủ: sale tạo mẫu mới ở Cài đặt rồi quay lại tab chat sẽ
+// KHÔNG thấy mẫu vừa tạo cho tới khi F5. Nên nạp lại mỗi lần mở popup, kèm TTL để
+// gõ "/" liên tục không bắn hàng loạt request.
+const TEMPLATES_TTL_MS = 15_000;
+let templatesLoadedAt = 0;
+
+async function loadTemplates(force = false) {
+  if (!force && Date.now() - templatesLoadedAt < TEMPLATES_TTL_MS) return;
   try {
     const res = await api.get<{ templates: TemplateItem[] }>('/automation/templates');
     templates.value = res.data.templates;
+    templatesLoadedAt = Date.now();
   } catch { /* non-critical */ }
 }
-onMounted(() => { loadTemplates(); });
+onMounted(() => { loadTemplates(true); });
+watch(showTemplatePopup, (open) => { if (open) void loadTemplates(); });
 
 // Listener cho tab CRM (cột 4) — widget "AI Next Action" → emit insert-suggestion
 // qua window event để giảm prop drilling. Cùng pattern với 'zalo-labels-synced'.

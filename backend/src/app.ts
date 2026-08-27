@@ -35,6 +35,8 @@ import { brandingRoutes } from './modules/branding/branding-routes.js';
 import { orgBrandingRoutes } from './modules/branding/org-branding-routes.js';
 import { zaloRoutes } from './modules/zalo/zalo-routes.js';
 import { customerListRoutes } from './modules/lists/list-routes.js';
+// Mẫu tin nhắn — route CRUD vốn ở _ee/automation; core tự lấp khi chạy bản Community.
+import { messageTemplateRoutes } from './modules/message-templates/message-template-routes.js';
 import { customerListEntryRoutes } from './modules/lists/list-entry-routes.js';
 import { chatRoutes } from './modules/chat/chat-routes.js';
 import { folderRoutes } from './modules/chat/folder-routes.js';
@@ -337,6 +339,12 @@ async function bootstrap() {
   await app.register(friendRoutes);
   await app.register(profileRoutes);
   await app.register(credentialRoutes);
+
+  // Mẫu tin nhắn (Cài đặt → Mẫu tin nhắn + popup gõ "/" trong chat).
+  // CHỈ đăng ký khi KHÔNG có bundle _ee: bản Extension đã tự phục vụ đúng các path
+  // /api/v1/automation/templates* này, đăng ký cả hai → Fastify ném lỗi trùng route
+  // lúc boot và app không lên được.
+  if (!ee) await app.register(messageTemplateRoutes);
 
   // Open-core: extension route registrations (no-op in Community edition).
   await ee?.registerExtensionRoutes?.(app);

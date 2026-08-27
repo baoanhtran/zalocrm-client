@@ -10,9 +10,9 @@
           <v-icon size="14">mdi-message-flash-outline</v-icon>
           Mẫu tin nhắn <span class="qtp-count">{{ filtered.length }}</span>
         </div>
-        <div class="qtp-tagbar">
+        <div v-if="availableTags.length" class="qtp-tagbar">
           <button class="qtp-tag" :class="{ active: !tagFilter }" @click="tagFilter = ''">Tất cả</button>
-          <button v-for="tag in PROJECT_TAGS" :key="tag" class="qtp-tag"
+          <button v-for="tag in availableTags" :key="tag" class="qtp-tag"
             :class="{ active: tagFilter === tag }" @click="tagFilter = tagFilter === tag ? '' : tag">
             {{ shortTag(tag) }}
           </button>
@@ -71,8 +71,6 @@ interface Template {
 // crmAlias = tên gợi nhớ PER-NICK (Friend.aliasInNick của cặp KH × nick đang chat).
 // Dùng cho {crm_*}. Trống → fallback fullName (khớp BE render-template.ts).
 interface ContactCtx { fullName?: string | null; gender?: string | null; crmAlias?: string | null }
-
-const PROJECT_TAGS = ['Emerald Garden View', 'Emerald Boulevard', 'Emerald River Park', 'Monrei Sài Gòn'];
 
 const props = defineProps<{
   visible: boolean;
@@ -136,7 +134,20 @@ onBeforeUnmount(() => {
   }
 });
 
-function shortTag(tag: string): string { return tag.replace(/^Emerald\s+/, '').replace('Sài Gòn', 'SG'); }
+// Nhãn lọc lấy ĐỘNG từ chính các mẫu đang có — trước đây hardcode 4 dự án bất động
+// sản của một khách hàng cụ thể nên mọi tổ chức khác thấy 4 chip lọc luôn rỗng.
+// Giới hạn 8 chip: popup nổi trên ô nhập, nhiều hơn là tràn mất danh sách mẫu.
+const MAX_TAG_CHIPS = 8;
+const availableTags = computed(() => {
+  const seen = new Set<string>();
+  for (const t of props.templates) for (const tag of t.tagIds ?? []) seen.add(tag);
+  return Array.from(seen).sort((a, b) => a.localeCompare(b, 'vi')).slice(0, MAX_TAG_CHIPS);
+});
+
+/** Cắt nhãn dài cho vừa chip, giữ nguyên chữ (không đoán quy ước đặt tên của khách). */
+function shortTag(tag: string): string {
+  return tag.length > 18 ? `${tag.slice(0, 17)}…` : tag;
+}
 
 // Chuẩn hóa query gõ tắt (giống normalizeShortcut backend) để so prefix với shortcut.
 function normQuery(q: string): string {

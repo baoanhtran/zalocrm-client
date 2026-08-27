@@ -11,6 +11,7 @@ import { buildReplyDraftPrompt } from './prompts/reply-draft.js';
 import { buildSummaryPrompt } from './prompts/summary.js';
 import { buildSentimentPrompt } from './prompts/sentiment.js';
 import { parseAppointmentRuleBased } from './appointment-fallback-parser.js';
+import { buildNoteContext } from './note-context.js';
 
 export type AiTaskType = 'reply_draft' | 'summary' | 'sentiment';
 
@@ -90,7 +91,7 @@ async function loadConversation(conversationId: string, orgId: string) {
   const conversation = await prisma.conversation.findFirst({
     where: { id: conversationId, orgId },
     include: {
-      contact: { select: { fullName: true } },
+      contact: { select: { id: true, fullName: true, notes: true } },
       messages: {
         where: { isDeleted: false },
         orderBy: { sentAt: 'desc' },
@@ -101,6 +102,34 @@ async function loadConversation(conversationId: string, orgId: string) {
   });
   if (!conversation) throw new Error('Conversation not found');
   return { ...conversation, messages: [...conversation.messages].reverse() };
+}
+
+/**
+ * Ráp user prompt cho 3 tác vụ AI của màn Chat.
+ *
+ * `includeNotes` là công tắc AiConfig.aiIncludeNotes: TẮT thì KHÔNG đụng tới bảng
+ * ghi chú, để bình luận nội bộ của nhân viên không rời máy chủ. Block ghi chú đặt
+ * NGOÀI <conversation_context> — bên trong là lời thoại thật của khách và nhân
+ * viên, ghi chú thì không, trộn vào AI sẽ tưởng khách đã nói ra.
+ */
+export async function buildAiPromptContext(input: {
+  orgId: string;
+  includeNotes: boolean;
+  contactId: string | null | undefined;
+  contactName: string | null | undefined;
+  profileNote: string | null | undefined;
+  messages: MessageContext[];
+}): Promise<string> {
+  const noteBlock = input.includeNotes
+    ? await buildNoteContext({ orgId: input.orgId, contactId: input.contactId, profileNote: input.profileNote })
+    : '';
+  return [
+    ...(noteBlock ? [noteBlock, ''] : []),
+    '<conversation_context>',
+    `Customer: ${input.contactName || 'customer'}`,
+    buildConversationContext(input.messages),
+    '</conversation_context>',
+  ].join('\n');
 }
 
 // M53 2026-05-30: exported để ai-virtual-chat-service reuse
@@ -152,15 +181,17 @@ export async function generateAiOutput(input: { orgId: string; conversationId: s
   const apiKey = await getProviderApiKey(input.orgId, currentConfig.provider);
   if (!apiKey) throw new Error('AI provider key is not configured');
 
-  const contextText = buildConversationContext(conversation.messages);
-  const language = detectLanguage(contextText);
-  const customerName = conversation.contact?.fullName || 'customer';
-  const userPrompt = [
-    `<conversation_context>`,
-    `Customer: ${customerName}`,
-    contextText,
-    `</conversation_context>`,
-  ].join('\n');
+  // Ngôn ngữ bám theo lời thoại, KHÔNG theo ghi chú nội bộ (ghi chú luôn tiếng Việt
+  // nên sẽ kéo lệch mọi hội thoại tiếng Anh sang trả lời tiếng Việt).
+  const language = detectLanguage(buildConversationContext(conversation.messages));
+  const userPrompt = await buildAiPromptContext({
+    orgId: input.orgId,
+    includeNotes: currentConfig.aiIncludeNotes,
+    contactId: conversation.contact?.id,
+    contactName: conversation.contact?.fullName,
+    profileNote: conversation.contact?.notes,
+    messages: conversation.messages,
+  });
 
   const system = input.type === 'reply_draft'
     ? buildReplyDraftPrompt(language)

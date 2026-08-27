@@ -324,6 +324,7 @@ export async function aiRoutes(app: FastifyInstance) {
         aiAssistantEnabled: cfg.aiAssistantEnabled,
         aiAssistantPromptTemplate: cfg.aiAssistantPromptTemplate ?? DEFAULT_VIRTUAL_CHAT_PROMPT,
         aiAssistantSkipNoisePattern: cfg.aiAssistantSkipNoisePattern,
+        aiIncludeNotes: cfg.aiIncludeNotes,
         defaultPrompt: DEFAULT_VIRTUAL_CHAT_PROMPT,
         provider: cfg.provider,
         model: cfg.model,
@@ -346,6 +347,7 @@ export async function aiRoutes(app: FastifyInstance) {
           aiAssistantEnabled?: boolean;
           aiAssistantPromptTemplate?: string | null;
           aiAssistantSkipNoisePattern?: string;
+          aiIncludeNotes?: boolean;
         };
         // Validate regex
         if (body.aiAssistantSkipNoisePattern) {
@@ -361,9 +363,10 @@ export async function aiRoutes(app: FastifyInstance) {
             aiAssistantEnabled: body.aiAssistantEnabled,
             aiAssistantPromptTemplate: body.aiAssistantPromptTemplate,
             aiAssistantSkipNoisePattern: body.aiAssistantSkipNoisePattern,
+            aiIncludeNotes: body.aiIncludeNotes,
           },
         });
-        return { ok: true, aiAssistantEnabled: updated.aiAssistantEnabled };
+        return { ok: true, aiAssistantEnabled: updated.aiAssistantEnabled, aiIncludeNotes: updated.aiIncludeNotes };
       } catch (err) {
         logger.error('[ai] assistant-config PUT error:', err);
         return reply.status(500).send({ error: 'Failed to update AI assistant config' });

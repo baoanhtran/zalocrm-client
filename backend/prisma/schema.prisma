@@ -1685,6 +1685,10 @@ model AiConfig {
   aiAssistantEnabled          Boolean  @default(true) @map("ai_assistant_enabled")
   aiAssistantPromptTemplate   String?  @map("ai_assistant_prompt_template") @db.Text
   aiAssistantSkipNoisePattern String   @default("^(ok|oke|okay|uhm|um|ờ|à|ừ|a|o|yes|no|y|n|\\.|\\.\\.|\\.\\.\\.)\\s*$") @map("ai_assistant_skip_noise_pattern")
+  // Cho AI đọc ghi chú nội bộ (bảng Note + Contact.notes) khi tóm tắt / soạn nháp.
+  // Default FALSE: ghi chú là bình luận nội bộ khách không thấy — org phải chủ động
+  // đồng ý mới gửi ra provider ngoài. Xem note-context.ts.
+  aiIncludeNotes              Boolean  @default(false) @map("ai_include_notes")
   createdAt                   DateTime @default(now()) @map("created_at")
   updatedAt                   DateTime @updatedAt @map("updated_at")
 

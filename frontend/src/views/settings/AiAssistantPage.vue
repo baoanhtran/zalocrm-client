@@ -28,6 +28,22 @@
         </label>
       </div>
 
+      <!-- Ghi chú nội bộ → AI -->
+      <div class="toggle-card">
+        <label class="toggle-row">
+          <input type="checkbox" v-model="config.aiIncludeNotes" />
+          <div>
+            <div class="toggle-label">Cho AI đọc ghi chú nội bộ</div>
+            <div class="toggle-hint">
+              Khi bật: 15 ghi chú gần nhất trong Hồ sơ khách hàng (kèm ô ghi chú tự do) được gửi kèm
+              tin nhắn cho AI khi tóm tắt, phân tích cảm xúc và soạn nháp trả lời — AI hiểu bối cảnh
+              sát hơn. Lưu ý: ghi chú là bình luận nội bộ khách không nhìn thấy, bật tức là gửi nội
+              dung đó ra nhà cung cấp AI ({{ config.provider }}).
+            </div>
+          </div>
+        </label>
+      </div>
+
       <!-- Provider info -->
       <div class="info-card">
         <div class="info-row">
@@ -122,6 +138,7 @@ interface AiAssistantConfig {
   aiAssistantEnabled: boolean;
   aiAssistantPromptTemplate: string | null;
   aiAssistantSkipNoisePattern: string;
+  aiIncludeNotes: boolean;
   defaultPrompt: string;
   provider: string;
   model: string;
@@ -184,6 +201,7 @@ async function save() {
       aiAssistantEnabled: config.value.aiAssistantEnabled,
       aiAssistantPromptTemplate: config.value.aiAssistantPromptTemplate,
       aiAssistantSkipNoisePattern: config.value.aiAssistantSkipNoisePattern,
+      aiIncludeNotes: config.value.aiIncludeNotes,
     });
     saveMessage.value = '✓ Đã lưu cài đặt';
     saveOk.value = true;

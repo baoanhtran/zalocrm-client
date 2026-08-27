@@ -22,6 +22,7 @@ import { getAiConfig, getProviderApiKey, generateText } from './ai-service.js';
 import { getProviderBaseUrl } from './provider-registry.js';
 import { DEFAULT_VIRTUAL_CHAT_PROMPT } from './prompts/virtual-chat-assistant.js';
 import { safeParseEntities, type ExtractedEntities } from './schemas/extracted-entities.js';
+import { buildNoteContext } from './note-context.js';
 import { withTenant } from '../../shared/tenant/tenant-context.js';
 import { assertAiCapability, auditAiAction } from './ai-capabilities.js';
 import { emitChatMessage } from '../../shared/realtime/emit-chat.js';
@@ -97,7 +98,7 @@ async function runVirtualChatAiReply(
     }
 
     // 4. Build context
-    const ctx = await buildContext(conversationId, orgId);
+    const ctx = await buildContext(conversationId, orgId, config.aiIncludeNotes);
     if (!ctx) return;
 
     const apiKey = await getProviderApiKey(orgId, config.provider);
@@ -107,7 +108,7 @@ async function runVirtualChatAiReply(
     }
 
     const systemPrompt = config.aiAssistantPromptTemplate || DEFAULT_VIRTUAL_CHAT_PROMPT;
-    const userPrompt = buildUserPrompt(ctx);
+    const userPrompt = buildVirtualChatUserPrompt(ctx);
 
     // 5. Generate AI reply with timeout
     let raw: string;
@@ -229,14 +230,22 @@ interface ContextData {
     source: string | null;
   };
   latestSaleMessage: string;
+  /** Block <internal_notes> đã dựng sẵn, rỗng nếu org tắt công tắc hoặc không có ghi chú. */
+  noteBlock: string;
 }
 
-async function buildContext(conversationId: string, orgId: string): Promise<ContextData | null> {
+async function buildContext(
+  conversationId: string,
+  orgId: string,
+  includeNotes: boolean,
+): Promise<ContextData | null> {
   const conv = await prisma.conversation.findFirst({
     where: { id: conversationId, orgId, isVirtual: true },
     include: {
       contact: {
         select: {
+          id: true,
+          notes: true,
           fullName: true,
           phone: true,
           gender: true,
@@ -260,25 +269,42 @@ async function buildContext(conversationId: string, orgId: string): Promise<Cont
   const ordered = [...conv.messages].reverse();
   const latestSale = ordered.filter((m) => m.senderType === 'self').slice(-1)[0];
   if (!latestSale) return null;
+
+  // Bóc tay từng field: `id` và `notes` chỉ để dựng noteBlock, KHÔNG được lọt vào
+  // contact_context (JSON.stringify sẽ nuốt cả object nếu bê nguyên conv.contact).
+  const c = conv.contact;
+  const contact = {
+    fullName: c?.fullName ?? null,
+    phone: c?.phone ?? null,
+    gender: c?.gender ?? null,
+    birthYear: c?.birthYear ?? null,
+    occupation: c?.occupation ?? null,
+    incomeRange: c?.incomeRange ?? null,
+    province: c?.province ?? null,
+    district: c?.district ?? null,
+    source: c?.source ?? null,
+  };
+
   return {
     history: ordered.map((m) => ({
       role: m.senderType === 'ai_assistant' ? ('ai' as const) : ('sale' as const),
       content: m.content ?? '',
     })),
-    contact: conv.contact ?? {
-      fullName: null, phone: null, gender: null, birthYear: null,
-      occupation: null, incomeRange: null, province: null, district: null, source: null,
-    },
+    contact,
     latestSaleMessage: latestSale.content ?? '',
+    noteBlock: includeNotes
+      ? await buildNoteContext({ orgId, contactId: c?.id, profileNote: c?.notes })
+      : '',
   };
 }
 
-function buildUserPrompt(ctx: ContextData): string {
+export function buildVirtualChatUserPrompt(ctx: ContextData): string {
   const contactSummary = JSON.stringify(ctx.contact, null, 2);
   const historyText = ctx.history
     .map((h) => `[${h.role === 'sale' ? 'SALE' : 'TRỢ LÝ'}]: ${h.content}`)
     .join('\n');
   return [
+    ...(ctx.noteBlock ? [ctx.noteBlock, ''] : []),
     '<contact_context>',
     contactSummary,
     '</contact_context>',

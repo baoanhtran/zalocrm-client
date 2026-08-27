@@ -647,13 +647,18 @@ onMounted(async () => {
 .mt-dlg-x { color: #64748b; display: flex; padding: 3px; border-radius: 6px; }
 .mt-dlg-x:hover { background: #f1f5f9; }
 .mt-dlg-body { padding: 18px; max-height: 66vh; overflow-y: auto; }
-.mt-dlg-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 16px; }
+/* align-items: start BẮT BUỘC — mặc định grid là stretch, ô nào cùng hàng với ô có
+   dòng gợi ý dài sẽ bị kéo cao bằng nó, và .mt-field là flex column nên ô nhập bên
+   trong phình ra lấp chỗ trống (ô "Tên mẫu" cao gấp đôi ô "Từ khoá gõ tắt"). */
+.mt-dlg-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 16px;
+  align-items: start; margin-bottom: 16px; }
 @media (max-width: 620px) { .mt-dlg-grid { grid-template-columns: 1fr; } }
 .mt-dlg-foot { display: flex; align-items: center; gap: 10px; padding: 12px 18px;
   border-top: 1px solid #e2e8f0; background: #f8fafc; }
 .mt-dlg-err { font-size: 12.5px; color: #dc2626; }
 
-.mt-field { display: flex; flex-direction: column; gap: 5px; }
+.mt-field { display: flex; flex-direction: column; gap: 5px; align-self: start; min-width: 0; }
+.mt-field > :deep(.v-input) { flex: none; }
 .mt-label { font-size: 12.5px; font-weight: 600; color: #334155; }
 .mt-label .req { color: #dc2626; }
 .mt-hint { font-size: 11.5px; color: #94a3b8; line-height: 1.5; }

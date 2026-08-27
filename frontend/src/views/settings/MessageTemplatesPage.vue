@@ -129,7 +129,6 @@
                   <v-icon size="12">{{ tpl.visibility === 'public' ? 'mdi-account-group' : 'mdi-lock-outline' }}</v-icon>
                   {{ tpl.visibility === 'public' ? 'Công khai' : 'Riêng tư' }}
                 </span>
-                <span v-if="tpl.category" class="mt-badge cat">{{ tpl.category }}</span>
               </div>
               <p class="mt-item-body">{{ previewOf(tpl) }}</p>
               <div v-if="(tpl.tagIds || []).length" class="mt-item-tags">
@@ -202,14 +201,6 @@
               <span v-else-if="!canPublish" class="mt-hint warn">
                 Bạn chỉ đăng được mẫu riêng tư. Muốn đăng công khai cho cả tổ chức thì nhờ quản lý cấp quyền.
               </span>
-            </label>
-
-            <label class="mt-field">
-              <span class="mt-label">Phân loại</span>
-              <v-combobox
-                v-model="form.category" :items="allCategories" density="compact" variant="outlined"
-                hide-details clearable placeholder="VD: Chào / Báo giá / Chốt"
-              />
             </label>
 
             <label class="mt-field">
@@ -332,12 +323,6 @@ const allTags = computed(() => {
   return Array.from(s).sort((a, b) => a.localeCompare(b, 'vi'));
 });
 
-const allCategories = computed(() => {
-  const s = new Set<string>();
-  for (const t of templates.value) if (t.category) s.add(t.category);
-  return Array.from(s).sort((a, b) => a.localeCompare(b, 'vi'));
-});
-
 function plainOf(tpl: MessageTemplate): string {
   return tpl.contentRich?.text ?? tpl.content ?? '';
 }
@@ -377,7 +362,6 @@ const formError = ref('');
 const form = reactive({
   name: '',
   shortcut: '',
-  category: null as string | null,
   folderId: '' as string,
   visibility: 'private' as 'public' | 'private',
   tagIds: [] as string[],
@@ -410,7 +394,6 @@ const visibilityOptions = computed(() => [
 function resetForm() {
   form.name = '';
   form.shortcut = '';
-  form.category = null;
   form.folderId = '';
   form.visibility = 'private';
   form.tagIds = [];
@@ -434,7 +417,6 @@ async function openEdit(tpl: MessageTemplate) {
   editingId.value = tpl.id;
   form.name = tpl.name;
   form.shortcut = tpl.shortcut ?? '';
-  form.category = tpl.category ?? null;
   form.folderId = tpl.folderId ?? '';
   form.visibility = (tpl.visibility ?? 'private') as 'public' | 'private';
   form.tagIds = [...(tpl.tagIds ?? [])];
@@ -468,7 +450,6 @@ async function onSave() {
   const payload = {
     name: form.name.trim(),
     shortcut: form.shortcut.trim() || null,
-    category: typeof form.category === 'string' ? form.category.trim() || null : null,
     folderId: form.folderId || null,
     visibility: form.visibility,
     tagIds: form.tagIds,
@@ -645,7 +626,6 @@ onMounted(async () => {
   border-radius: 999px; padding: 1px 8px; }
 .mt-badge.pub { background: #ecfdf5; color: #047857; }
 .mt-badge.priv { background: #f1f5f9; color: #64748b; }
-.mt-badge.cat { background: #fef3c7; color: #92400e; }
 .mt-item-body { font-size: 12.5px; color: #64748b; margin: 0; line-height: 1.55;
   white-space: pre-wrap; word-break: break-word; }
 .mt-item-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }

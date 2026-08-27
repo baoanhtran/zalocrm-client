@@ -996,7 +996,7 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
         where: { id, orgId: user.orgId },
         select: {
           id: true, status: true, statusId: true, fullName: true, phone: true, source: true,
-          assignedUserId: true, crmName: true, email: true, gender: true,
+          assignedUserId: true, crmName: true, email: true, gender: true, salutation: true,
           birthDate: true, leadScore: true, addressLine: true, occupation: true,
         },
       });
@@ -1078,6 +1078,14 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
       if (body.gender !== undefined) {
         updateData.gender = body.gender || null;
         updateData.genderLocked = !!body.gender;
+      }
+      // Xưng hô riêng ("Em"/"Cô"/"Chú") — giá trị biến {gender} lúc soạn tin.
+      // KHÔNG đụng genderLocked: đây là cách gọi, không phải giới tính, nên sale đặt
+      // xưng hô riêng vẫn để SDK Zalo tiếp tục tự điền `gender` cho lọc/thống kê.
+      // Cắt 24 ký tự — xưng hô là 1-2 chữ, dài hơn là dán nhầm cả câu.
+      if (body.salutation !== undefined) {
+        const sal = typeof body.salutation === 'string' ? body.salutation.trim().slice(0, 24) : '';
+        updateData.salutation = sal || null;
       }
       if (body.occupation !== undefined) updateData.occupation = body.occupation || null;
       if (body.addressLine !== undefined) updateData.addressLine = body.addressLine || null;
@@ -1234,7 +1242,7 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
       const infoDiff = computeDiff(
         existing as Record<string, unknown>,
         updated as Record<string, unknown>,
-        ['fullName', 'crmName', 'phone', 'email', 'gender', 'birthDate', 'addressLine', 'occupation', 'assignedUserId'],
+        ['fullName', 'crmName', 'phone', 'email', 'gender', 'salutation', 'birthDate', 'addressLine', 'occupation', 'assignedUserId'],
       );
       if (Object.keys(infoDiff).length > 0) {
         logActivity({

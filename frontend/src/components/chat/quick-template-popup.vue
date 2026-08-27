@@ -56,6 +56,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch, nextTick, onBeforeUnmount } from 'vue';
+import { resolveSalutation } from '@/utils/salutation';
 
 interface RichPayload { text: string; styles?: Array<{ st: string; start: number; len: number }> }
 interface Template {
@@ -70,7 +71,13 @@ interface Template {
 }
 // crmAlias = tên gợi nhớ PER-NICK (Friend.aliasInNick của cặp KH × nick đang chat).
 // Dùng cho {crm_*}. Trống → fallback fullName (khớp BE render-template.ts).
-interface ContactCtx { fullName?: string | null; gender?: string | null; crmAlias?: string | null }
+interface ContactCtx {
+  fullName?: string | null;
+  gender?: string | null;
+  /** Xưng hô riêng sale đặt cho khách này — đè giới tính khi render {gender}. */
+  salutation?: string | null;
+  crmAlias?: string | null;
+}
 
 const props = defineProps<{
   visible: boolean;
@@ -203,8 +210,10 @@ function renderRich(tpl: Template): RichPayload {
 
   // 8 biến (anh chốt 2026-06-15) — KHỚP backend render-template.ts. crm_* = tên gợi nhớ
   // per-nick (crmAlias) → fallback fullName.
-  const gender = props.contact?.gender;
-  const genderStr = gender === 'female' ? 'Chị' : gender === 'male' ? 'Anh' : 'Anh/Chị';
+  const genderStr = resolveSalutation({
+    gender: props.contact?.gender,
+    salutation: props.contact?.salutation,
+  });
   const nameRaw = (props.contact?.fullName ?? '').trim();
   const nameLast = nameRaw ? (nameRaw.split(/\s+/).pop() ?? '') : '';
   const saleRaw = (props.saleFullName ?? '').trim();

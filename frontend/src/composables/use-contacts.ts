@@ -70,6 +70,8 @@ export interface Contact {
 
   // Demographic / personal
   gender?: string | null;
+  /** Xưng hô riêng cho khách này ("Em"/"Cô"/"Chú") — giá trị biến {gender} khi soạn tin. */
+  salutation?: string | null;
   birthYear?: number | null;
   birthDate?: string | null;
   occupation?: string | null;

@@ -245,8 +245,35 @@
                             <button type="button" class="codechip" :title="'Copy ' + it.code" @click="copyAttr(it.code)">{{ it.code }}</button>
                           </td>
                           <td class="attr-val">
-                            <span v-if="it.value" class="av-real">{{ it.value }}</span>
-                            <span v-else class="dim">— trống —</span>
+                            <!-- Hàng {gender} sửa được tại chỗ: xưng hô là thứ sale muốn đổi
+                                 ngay khi đang đọc hồ sơ, không đáng bắt mở form sửa. -->
+                            <template v-if="it.editable">
+                              <span v-if="salEditing" class="sal-edit">
+                                <input
+                                  ref="salInputRef"
+                                  v-model="salDraft"
+                                  class="cpd-in sm"
+                                  :placeholder="salPlaceholder"
+                                  :maxlength="MAX_SALUTATION_LEN"
+                                  @keydown.enter.prevent="saveSalutation"
+                                  @keydown.esc.prevent="salEditing = false"
+                                />
+                                <button type="button" class="sal-ok" :disabled="salSaving" title="Lưu (Enter)"
+                                  @click="saveSalutation">✓</button>
+                                <button type="button" class="sal-cancel" title="Huỷ (Esc)"
+                                  @click="salEditing = false">✕</button>
+                              </span>
+                              <button v-else type="button" class="sal-view" title="Bấm để đổi cách xưng hô"
+                                @click="startEditSalutation">
+                                <span class="av-real">{{ it.value }}</span>
+                                <span v-if="!cc.salutation" class="dim sal-auto">· tự suy từ giới tính</span>
+                                <span class="sal-pen">✎</span>
+                              </button>
+                            </template>
+                            <template v-else>
+                              <span v-if="it.value" class="av-real">{{ it.value }}</span>
+                              <span v-else class="dim">— trống —</span>
+                            </template>
                           </td>
                         </tr>
                       </template>
@@ -424,7 +451,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue';
+import { ref, computed, watch, nextTick } from 'vue';
 import { useRouter } from 'vue-router';
 import { api } from '@/api/index';
 import { useToast } from '@/composables/use-toast';
@@ -432,6 +459,7 @@ import { formatRecentDateTime, cleanPreview } from '@/composables/use-contacts';
 import PrivateBlur from '@/components/privacy/PrivateBlur.vue';
 import TagCrmBar from '@/components/chat/TagCrmBar.vue';
 import { TEMPLATE_VARIABLES } from '@/constants/template-variables';
+import { resolveSalutation, normalizeSalutationInput, MAX_SALUTATION_LEN } from '@/utils/salutation';
 import type { Contact } from '@/composables/use-contacts';
 
 const props = withDefaults(defineProps<{
@@ -866,7 +894,7 @@ const attrValues = computed<Record<string, string>>(() => {
   const age = ct.birthYear ? String(new Date().getFullYear() - ct.birthYear) : (ageOf.value != null ? String(ageOf.value) : '');
   const fmt = (iso: any) => (iso ? formatDate(iso) : '');
   return {
-    gender: ct.gender === 'female' ? 'Chị' : ct.gender === 'male' ? 'Anh' : 'Anh Chị',
+    gender: resolveSalutation({ gender: ct.gender, salutation: ct.salutation }),
     name: lastWordU(fullName) || 'Anh Chị',
     name_full: fullName || 'Anh Chị',
     name_first: firstWordU(fullName),
@@ -908,15 +936,61 @@ const attrValues = computed<Record<string, string>>(() => {
 // Gom 36 biến theo nhóm `cat` (giữ thứ tự catalog); pernick → 1 nhóm riêng.
 const attrGroups = computed(() => {
   const order: string[] = [];
-  const map: Record<string, Array<{ code: string; label: string; value: string; pernick: boolean }>> = {};
+  const map: Record<string, Array<{ code: string; label: string; value: string; pernick: boolean; editable: boolean }>> = {};
   for (const v of TEMPLATE_VARIABLES) {
     const grp = v.cat === 'pernick' ? 'Theo nick đang chọn' : (v.cat || 'Khác');
     if (!map[grp]) { map[grp] = []; order.push(grp); }
     const key = v.code.replace(/[{}]/g, '');
-    map[grp].push({ code: v.code, label: v.label, value: attrValues.value[key] ?? '', pernick: v.cat === 'pernick' });
+    map[grp].push({
+      code: v.code, label: v.label, value: attrValues.value[key] ?? '',
+      pernick: v.cat === 'pernick',
+      // Chỉ {gender} sửa tại chỗ. 35 biến còn lại hoặc suy từ field hồ sơ (sửa ở form),
+      // hoặc là số liệu hệ thống (điểm, ngày hoạt động) — gõ tay vào là sai dữ liệu.
+      editable: v.code === '{gender}',
+    });
   }
   return order.map((g) => ({ group: g, items: map[g] }));
 });
+
+// ── Xưng hô riêng ({gender}) — sửa tại chỗ ở cột "Giá trị của khách này" ────
+const salEditing = ref(false);
+const salDraft = ref('');
+const salSaving = ref(false);
+const salInputRef = ref<HTMLInputElement | HTMLInputElement[] | null>(null);
+
+/** Gợi ý trong ô trống = chữ đang dùng nếu không đặt riêng → sale biết mình đang đè lên cái gì. */
+const salPlaceholder = computed(() =>
+  `Để trống = ${resolveSalutation({ gender: cc.value.gender, salutation: null })}`,
+);
+
+async function startEditSalutation() {
+  // Draft là giá trị ĐÈ (có thể rỗng), KHÔNG phải chữ đang hiển thị — nếu đổ chữ suy ra
+  // vào ô thì sale bấm Lưu là vô tình biến giá trị tự suy thành giá trị cố định.
+  salDraft.value = cc.value.salutation ?? '';
+  salEditing.value = true;
+  await nextTick();
+  const el = salInputRef.value;
+  (Array.isArray(el) ? el[0] : el)?.focus();
+}
+
+async function saveSalutation() {
+  const id = c.value?.id;
+  if (!id || salSaving.value) return;
+  const next = normalizeSalutationInput(salDraft.value);
+  if (next === (cc.value.salutation ?? null)) { salEditing.value = false; return; }
+  salSaving.value = true;
+  try {
+    await api.put(`/contacts/${id}`, { salutation: next });
+    if (c.value) (c.value as any).salutation = next;
+    salEditing.value = false;
+    toast.success(next ? `Sẽ gọi khách này là "${next}"` : 'Đã bỏ xưng hô riêng, quay về tự suy từ giới tính');
+    emit('saved');
+  } catch (err: any) {
+    toast.error(err?.response?.data?.message || err?.response?.data?.error || 'Lưu xưng hô thất bại');
+  } finally {
+    salSaving.value = false;
+  }
+}
 
 async function copyAttr(code: string) {
   try { await navigator.clipboard.writeText(code); toast.success(`Đã copy ${code}`); }
@@ -1110,4 +1184,21 @@ async function copyAttr(code: string) {
 .btn.primary:hover { background: var(--smax-primary-hover); color: #fff; }
 .btn.virtual { background: #fff3e0; color: #ef6c00; border-color: #ffcc80; }
 .btn:disabled { opacity: 0.6; cursor: default; }
+
+/* ── Sửa xưng hô tại chỗ trong bảng biến ── */
+.sal-view { display: inline-flex; align-items: center; gap: 6px; padding: 1px 6px;
+  border-radius: 5px; text-align: left; }
+.sal-view:hover { background: #eef2f7; }
+.sal-view:hover .sal-pen { opacity: 1; }
+.sal-pen { opacity: 0; font-size: 11px; color: #64748b; transition: opacity .12s; }
+.sal-auto { font-size: 11px; }
+.sal-edit { display: inline-flex; align-items: center; gap: 4px; }
+.sal-edit .cpd-in { width: 130px; }
+.sal-ok, .sal-cancel { width: 22px; height: 22px; border-radius: 5px; font-size: 12px;
+  display: inline-flex; align-items: center; justify-content: center; }
+.sal-ok { background: #dcfce7; color: #15803d; }
+.sal-ok:hover { background: #bbf7d0; }
+.sal-ok:disabled { opacity: .5; }
+.sal-cancel { background: #f1f5f9; color: #64748b; }
+.sal-cancel:hover { background: #e2e8f0; }
 </style>

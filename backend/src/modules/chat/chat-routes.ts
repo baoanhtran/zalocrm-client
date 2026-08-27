@@ -1149,7 +1149,7 @@ export async function chatRoutes(app: FastifyInstance) {
       // Read current Contact to decide which fields to fill (don't overwrite manual edits)
       const contact = await prisma.contact.findUnique({
         where: { id: conv.contactId },
-        select: { gender: true, phone: true, birthDate: true, hasZalo: true, zaloGlobalId: true, zaloUsername: true },
+        select: { gender: true, salutation: true, phone: true, birthDate: true, hasZalo: true, zaloGlobalId: true, zaloUsername: true },
       });
       if (!contact) return reply.status(404).send({ error: 'Contact not found' });
 

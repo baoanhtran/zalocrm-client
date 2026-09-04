@@ -1059,9 +1059,16 @@ export async function mediaRoutes(app: FastifyInstance) {
           ...(canViewAll ? {} : { OR: [{ ownerUserId: userId }, { visibility: 'public' }] }),
         },
         orderBy: { name: 'asc' },
-        select: { id: true, name: true, kind: true, visibility: true, ownerUserId: true },
+        select: {
+          id: true, name: true, kind: true, visibility: true, ownerUserId: true,
+          // assetCount: số mục ĐANG trong kho (bỏ ảnh ở thùng rác) — FE cần con số này để
+          // hộp xác nhận xóa thư mục nói đúng "còn N mục" NGAY lần hỏi đầu, không phải hỏi 2 lần.
+          _count: { select: { assets: { where: { archivedAt: null } } } },
+        },
       });
-      return { folders };
+      return {
+        folders: folders.map(({ _count, ...f }) => ({ ...f, assetCount: _count.assets })),
+      };
     },
   );
 
@@ -1085,6 +1092,47 @@ export async function mediaRoutes(app: FastifyInstance) {
         },
       });
       return { folder: { id: folder.id, name: folder.name } };
+    },
+  );
+
+  // ── DELETE /api/v1/media/folders/:id — xóa thư mục, GIỮ NGUYÊN ảnh bên trong ─
+  // Anh chốt 2026-09-04: xóa thư mục KHÔNG đụng tới ảnh. FK media_assets.folder_id
+  // ON DELETE SET NULL → ảnh rơi về "Tất cả", không vào thùng rác, không mất byte.
+  // Quyền: grant 'edit' + scope chủ sở hữu — y hệt cách sale xóa ảnh CỦA MÌNH
+  // (DELETE /media/:id). view_all (admin/marketing) xóa được thư mục cả org, nên
+  // sale KHÔNG đụng được thư mục Công khai do admin tạo.
+  // Thư mục còn ảnh → 409 kèm số lượng để FE hỏi lại; chỉ xóa khi ?force=true
+  // (pattern y DELETE /automation/template-folders/:id).
+  app.delete(
+    '/api/v1/media/folders/:id',
+    { preHandler: requireGrant('media', 'edit') },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const user = request.user!;
+      const userId = (user as any).userId ?? user.id;
+      const { id } = request.params as { id: string };
+      const force = (request.query as { force?: string }).force === 'true';
+      const canViewAll = await userHasGrant(userId, 'media', 'view_all');
+      const folder = await prisma.mediaAlbum.findFirst({
+        // kind='folder': chặn xóa nhầm bộ sưu tập "Yêu thích của tôi" tự sinh (kind='favorite').
+        where: { id, orgId: user.orgId, kind: 'folder', ...(canViewAll ? {} : { ownerUserId: userId }) },
+        select: { id: true, name: true },
+      });
+      if (!folder) return reply.status(404).send({ error: 'Không tìm thấy thư mục (hoặc không thuộc bạn)' });
+
+      // Đếm ảnh ĐANG trong kho — bỏ qua ảnh đã ở thùng rác (người dùng không nhìn thấy
+      // chúng trong thư mục nên đừng đưa vào con số cảnh báo).
+      const assetCount = await prisma.mediaAsset.count({ where: { folderId: id, archivedAt: null } });
+      if (assetCount > 0 && !force) {
+        return reply.status(409).send({
+          error: `Thư mục còn ${assetCount} mục. Xóa thư mục sẽ đưa số mục này ra ngoài thư mục (vẫn nằm trong kho).`,
+          code: 'FOLDER_NOT_EMPTY',
+          assetCount,
+        });
+      }
+      // FK ON DELETE SET NULL lo phần ảnh; cascade media_album_items dọn hàng nối (nếu có).
+      await prisma.mediaAlbum.delete({ where: { id: folder.id } });
+      logger.info(`[media][audit] delete_folder folder=${id} user=${userId} released=${assetCount}`);
+      return { ok: true, releasedAssets: assetCount };
     },
   );
 

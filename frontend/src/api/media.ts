@@ -123,6 +123,8 @@ export interface MediaFolder {
   kind: string;
   visibility: 'private' | 'public';
   ownerUserId: string | null;
+  /** Số mục đang nằm trong thư mục (KHÔNG tính ảnh ở thùng rác). Dùng cho hộp xác nhận xóa. */
+  assetCount: number;
 }
 
 /** Sửa quyền/tên/tag/thư mục của 1 asset. confirmShare=true: xác nhận chia sẻ ảnh nick Riêng tư (D11). */
@@ -256,5 +258,16 @@ export async function createMediaFolder(
   visibility: 'private' | 'public' = 'private',
 ): Promise<{ folder: { id: string; name: string } }> {
   const { data } = await api.post('/media/folders', { name, visibility });
+  return data;
+}
+
+/** Xóa thư mục. Ảnh bên trong GIỮ NGUYÊN trong kho, chỉ rơi về "Tất cả".
+ *  Thư mục còn ảnh mà force=false → BE trả 409 { code:'FOLDER_NOT_EMPTY', assetCount }
+ *  để FE hỏi lại kèm số lượng, rồi gọi lại với force=true. */
+export async function deleteMediaFolder(
+  id: string,
+  force = false,
+): Promise<{ ok: boolean; releasedAssets: number }> {
+  const { data } = await api.delete(`/media/folders/${id}`, force ? { params: { force: 'true' } } : undefined);
   return data;
 }

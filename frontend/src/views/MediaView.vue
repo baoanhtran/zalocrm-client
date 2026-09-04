@@ -107,7 +107,14 @@
         </div>
         <div class="f" :class="{ on: !activeFolder }" @click="setFolder(null)"><FolderIcon :size="13" :stroke-width="1.9" /> Tất cả</div>
         <div v-for="f in folders" :key="f.id" class="f" :class="{ on: activeFolder === f.id }" @click="setFolder(f.id)">
-          <FolderIcon :size="13" :stroke-width="1.9" /> {{ f.name }} <LockIcon v-if="f.visibility === 'private'" class="lk" :size="11" :stroke-width="2" />
+          <FolderIcon :size="13" :stroke-width="1.9" />
+          <span class="fnm" :title="f.name">{{ f.name }}</span>
+          <LockIcon v-if="f.visibility === 'private'" class="lk" :size="11" :stroke-width="2" />
+          <!-- Xóa thư mục: chỉ hiện với thư mục MÌNH tạo (hoặc admin xem-tất-cả). Ảnh bên
+               trong không mất — chỉ rơi về "Tất cả". @click.stop để không chọn thư mục. -->
+          <button v-if="canDeleteFolder(f)" class="delf" :title="`Xóa thư mục ${f.name}`" @click.stop="onDeleteFolder(f)">
+            <Trash2Icon :size="12" :stroke-width="1.9" />
+          </button>
         </div>
       </aside>
 
@@ -204,12 +211,14 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
 import {
-  listMediaPaged, listMediaUploaders, uploadMedia, listMediaFolders, createMediaFolder,
+  listMediaPaged, listMediaUploaders, uploadMedia, listMediaFolders, createMediaFolder, deleteMediaFolder,
   listTrash, restoreMedia, permanentDeleteMedia, emptyTrash,
   archiveMedia, bulkUpdateMedia,
   type MediaAssetItem, type MediaFolder, type TrashItem,
 } from '@/api/media';
 import { useToast } from '@/composables/use-toast';
+import { useConfirm } from '@/composables/use-confirm';
+import { useAuthStore } from '@/stores/auth';
 import MediaDetailPanel from '@/components/media/MediaDetailPanel.vue';
 import {
   Trash2 as Trash2Icon, RotateCcw as RotateCcwIcon, X as XIcon, CheckSquare as CheckSquareIcon,
@@ -224,6 +233,8 @@ function kindIcon(kind: string) {
 }
 
 const toast = useToast();
+const { confirm } = useConfirm();
+const auth = useAuthStore();
 
 // Nhãn + icon NGUỒN ảnh (2026-06-15): "nick nào · sale nào" hoặc "Tải lên thủ công · sale".
 function sourceLabel(a: MediaAssetItem): string {
@@ -451,6 +462,37 @@ async function onCreateFolder() {
   }
 }
 
+/** Ai được xóa 1 thư mục — khớp đúng luật BE (grant media.edit + scope chủ sở hữu):
+ *  thư mục MÌNH tạo, hoặc có media.view_all (admin/marketing) thì xóa được cả org.
+ *  Bộ sưu tập "⭐ Yêu thích của tôi" (kind='favorite') tự sinh → không cho xóa. */
+function canDeleteFolder(f: MediaFolder): boolean {
+  if (f.kind !== 'folder' || !auth.canAccess('media', 'edit')) return false;
+  return auth.canAccess('media', 'view_all') || f.ownerUserId === auth.user?.id;
+}
+
+async function onDeleteFolder(f: MediaFolder) {
+  const n = f.assetCount ?? 0;
+  const ok = await confirm({
+    title: `Xóa thư mục "${f.name}"?`,
+    message: n
+      ? `Thư mục còn ${n} mục. Xóa thư mục thì ${n} mục này chỉ ra ngoài thư mục (về "Tất cả") — KHÔNG mục nào bị xóa, không vào thùng rác.`
+      : 'Thư mục đang trống.',
+    tone: 'danger',
+    confirmText: 'Xóa thư mục',
+  });
+  if (!ok) return;
+  try {
+    // force khi còn mục bên trong — BE chốt 409 FOLDER_NOT_EMPTY để chặn xóa nhầm ngoài UI.
+    await deleteMediaFolder(f.id, n > 0);
+    toast.success(n > 0 ? `Đã xóa thư mục — ${n} mục vẫn nằm trong kho` : 'Đã xóa thư mục');
+    // Đang đứng TRONG thư mục vừa xóa → nhảy về "Tất cả", nếu không lưới sẽ lọc theo id chết.
+    if (activeFolder.value === f.id) { activeFolder.value = null; applyFilters(); }
+    await loadFolders();
+  } catch (e: any) {
+    toast.warning(e?.response?.data?.error || 'Không xóa được thư mục');
+  }
+}
+
 function onAssetUpdated(patch: Partial<MediaAssetItem>) {
   if (!selected.value) return;
   Object.assign(selected.value, patch);
@@ -561,7 +603,17 @@ onMounted(() => { reload(); loadFolders(); loadUploaders(); });
 .addf { border:none; background:none; cursor:pointer; color:var(--ink); font-size:16px; line-height:1; }
 .f { display:flex; align-items:center; gap:8px; padding:6px 8px; border-radius:var(--r-sm); font-size:13px; color:var(--body); cursor:pointer; }
 .f.on { background:var(--soft); color:var(--ink); font-weight:500; }
-.f .lk { margin-left:auto; font-size:11px; }
+/* Tên thư mục chiếm hết chỗ trống, dài quá thì cắt "…" — đẩy ổ khóa + nút xóa về cuối dòng. */
+.f .fnm { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.f .lk { flex-shrink:0; font-size:11px; }
+.delf { flex-shrink:0; display:flex; align-items:center; border:none; background:none; padding:2px; margin-right:-2px; border-radius:4px; cursor:pointer; color:var(--muted); }
+.delf:hover { color:var(--coral); background:#fff; }
+/* Có chuột: nút xóa chỉ hiện khi rê vào dòng (đỡ rừng icon thùng rác trong cây thư mục).
+   Màn cảm ứng (hover:none) không rê được nên để luôn hiện. */
+@media (hover:hover) {
+  .delf { opacity:0; transition:opacity .12s; }
+  .f:hover .delf, .delf:focus-visible { opacity:1; }
+}
 .m-grid-wrap { flex:1; padding:16px 24px; overflow:auto; min-width:0; }
 .m-pager { display:flex; align-items:center; justify-content:center; gap:14px; padding:16px 0 4px; }
 .pg-btn { border:1px solid var(--hairline); background:var(--canvas); border-radius:var(--r-sm,6px); padding:6px 14px; font-size:13px; cursor:pointer; color:var(--ink); }

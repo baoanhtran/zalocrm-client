@@ -57,6 +57,7 @@ beforeEach(() => {
     sentAt: new Date('2026-04-17T10:00:00.000Z'),
   });
   prismaMock.message.create.mockResolvedValue({ id: 'msg-2', content: 'thanks' });
+  prismaMock.user.findUnique.mockResolvedValue({ fullName: 'Sale A', email: 'sale@example.com' });
   prismaMock.conversation.update.mockResolvedValue({});
   zaloPoolMock.getInstance.mockReturnValue({
     api: {
@@ -92,6 +93,36 @@ describe('POST /api/v1/conversations/:id/messages', () => {
     );
     expect(prismaMock.message.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ quote: expect.objectContaining({ msgId: 'zalo-reply-1' }) }),
+    }));
+  });
+
+  // Bug 2026-09-04: sale gõ tin trên web → Zalo NHẬN được, nhưng listener echo chèn row
+  // trước khi route kịp create → P2002 unique (conversation_id, zalo_msg_id) → route ném
+  // → 500 "Không gửi được tin nhắn" DÙ tin đã tới khách. Sale gửi lại → khách nhận trùng.
+  // Nhánh cứu P2002 cũ chỉ chạy khi có echoId (app mobile), web không gửi field này.
+  it('returns the row the listener already saved when zaloMsgId hits P2002 without echoId', async () => {
+    // zca-js trả { message: { msgId } } — route đọc shape này để lấy zaloMsgId.
+    sendMessageMock.mockResolvedValue({ message: { msgId: 'zalo-msg-2' } });
+    const p2002 = Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
+    prismaMock.message.create.mockRejectedValue(p2002);
+    prismaMock.message.findUnique.mockResolvedValue({
+      id: 'msg-from-echo',
+      content: 'thanks',
+      zaloMsgId: 'zalo-msg-2',
+      zaloMsgIdNum: null,
+    });
+
+    const app = buildApp();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/conversations/conv-1/messages',
+      payload: { content: 'thanks' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual(expect.objectContaining({ id: 'msg-from-echo' }));
+    expect(prismaMock.message.findUnique).toHaveBeenCalledWith(expect.objectContaining({
+      where: { conversationId_zaloMsgId: { conversationId: 'conv-1', zaloMsgId: 'zalo-msg-2' } },
     }));
   });
 });

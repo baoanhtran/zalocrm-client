@@ -93,3 +93,65 @@ export async function createMediaMessage(input: CreateMediaMessageInput) {
     },
   });
 }
+
+/**
+ * buildReplyQuote / mapReplyMsgType — dựng payload `quote` cho zca-js.
+ *
+ * 2026-09-04: chuyển từ chat-routes.ts sang đây vì chat-attachment-routes cũng cần
+ * (đính ảnh trong lúc đang Reply trước đây nuốt mất trạng thái trả lời).
+ *
+ * LƯU Ý zca-js: quote CHỈ gắn được vào tin CHỮ. handleAttachment nhận tham số quote
+ * nhưng không sinh param qmsg* nào → gửi kèm đính kèm thì thư viện tách tin chữ
+ * (mang quote) ra trước, rồi mới tới đính kèm. Không gộp 1 tin được.
+ */
+export function mapReplyMsgType(contentType: string): string {
+  if (contentType === 'text') return 'webchat';
+  if (contentType === 'image') return 'photo';
+  if (contentType === 'file') return 'file';
+  if (contentType === 'video') return 'video';
+  if (contentType === 'voice') return 'voice';
+  if (contentType === 'sticker') return 'sticker';
+  if (contentType === 'gif') return 'gif';
+  if (contentType === 'link') return 'link';
+  if (contentType === 'location') return 'location';
+  if (contentType === 'contact_card') return 'card';
+  if (contentType === 'bank_transfer') return 'bank';
+  if (contentType === 'call') return 'call';
+  if (contentType === 'qr_code') return 'qr';
+  if (contentType === 'reminder') return 'remind';
+  if (contentType === 'poll') return 'poll';
+  if (contentType === 'note') return 'note';
+  if (contentType === 'forwarded') return 'forward';
+  return contentType;
+}
+
+export function buildReplyQuote(message: {
+  zaloMsgId: string | null;
+  senderUid: string | null;
+  content: string | null;
+  contentType: string;
+  sentAt: Date;
+}) {
+  if (!message.zaloMsgId || !message.senderUid) return null;
+  let quoteContent = message.content ?? '';
+  if (['image', 'video', 'file'].includes(message.contentType) && quoteContent.startsWith('{')) {
+    try {
+      const p = JSON.parse(quoteContent);
+      if (message.contentType === 'image') quoteContent = '[Hình ảnh]';
+      else if (message.contentType === 'video') quoteContent = '[Video]';
+      else quoteContent = `[Tệp] ${p.name || ''}`.trim();
+    } catch {
+      quoteContent = `[${message.contentType}]`;
+    }
+  }
+  return {
+    content: quoteContent,
+    msgType: mapReplyMsgType(message.contentType),
+    propertyExt: {},
+    uidFrom: message.senderUid,
+    msgId: message.zaloMsgId,
+    cliMsgId: message.zaloMsgId,
+    ts: String(message.sentAt.getTime()),
+    ttl: 0,
+  };
+}

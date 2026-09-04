@@ -595,6 +595,37 @@
           </button>
         </div>
 
+        <!-- Khay chờ đính kèm (2026-09-04): ảnh/video/file nằm đây tới khi bấm Gửi, để
+             chữ đang gõ đi CHUNG 1 tin với đính kèm thay vì tách làm 2 tin. -->
+        <div v-if="pendingAttachments.length" class="pending-tray">
+          <div
+            v-for="p in pendingAttachments"
+            :key="p.id"
+            class="pending-item"
+            :class="{ 'pending-item-file': p.kind !== 'image' }"
+            :title="p.name"
+          >
+            <img v-if="p.previewUrl" :src="p.previewUrl" :alt="p.name" class="pending-thumb" />
+            <template v-else>
+              <v-icon size="18">{{ p.kind === 'video' ? 'mdi-video' : 'mdi-file-document-outline' }}</v-icon>
+              <span class="pending-name">{{ p.name }}</span>
+            </template>
+            <button
+              class="pending-remove"
+              title="Bỏ khỏi khay"
+              :disabled="attachmentSending"
+              @click="removePendingAttachment(p.id)"
+            >✕</button>
+          </div>
+          <button
+            v-if="pendingAttachments.length > 1"
+            class="pending-clear"
+            :disabled="attachmentSending"
+            @click="clearPendingAttachments()"
+          >Bỏ hết</button>
+        </div>
+        <div v-if="pendingReplyHint" class="pending-hint">⚠️ {{ pendingReplyHint }}</div>
+
         <div class="input-row">
           <!-- Avatar nick đang gửi — OUTSIDE editor (góc trái), halo gradient cam-đỏ-vàng -->
           <NickAvatarLock
@@ -668,11 +699,11 @@
           <button
             class="send-btn"
             :class="{ 'send-btn-virtual': isVirtualConv }"
-            :disabled="!inputText.trim() || sending || isArchivedNick"
+            :disabled="!canSubmitComposer(inputText, pendingAttachments) || sending || attachmentSending || isArchivedNick"
             @click="handleSend"
             :title="isArchivedNick ? 'Nick đã xóa — không gửi được.' : isVirtualConv ? 'Lưu nội bộ (Enter) — KHÔNG gửi đi Zalo' : 'Gửi (Enter)'"
           >
-            <v-icon v-if="sending" size="20">mdi-loading mdi-spin</v-icon>
+            <v-icon v-if="sending || attachmentSending" size="20">mdi-loading mdi-spin</v-icon>
             <template v-else-if="isVirtualConv">
               <v-icon size="18">mdi-pencil</v-icon>
               <span class="send-btn-virtual-label">Lưu nội bộ</span>
@@ -1018,6 +1049,7 @@ import LinkParentDialog from '@/components/chat/LinkParentDialog.vue';
 import MessageContextMenu from '@/components/chat/message-context-menu.vue';
 import TypingIndicator from '@/components/chat/typing-indicator.vue';
 import ReplyPreviewBar from '@/components/chat/reply-preview-bar.vue';
+import { planComposerSend, canSubmitComposer } from '@/components/chat/composer-send-rules';
 import ForwardDialog from '@/components/chat/forward-dialog.vue';
 import RichTextEditor from '@/components/chat/rich-text-editor.vue';
 import TagCrmBar from '@/components/chat/TagCrmBar.vue';
@@ -2299,17 +2331,17 @@ function onPickFile() { fileInputRef.value?.click(); }
 
 function onImageFilesPicked(e: Event) {
   const files = Array.from((e.target as HTMLInputElement).files || []);
-  if (files.length) handleImageFiles(files);
+  if (files.length) enqueueAttachments(files);
   if (imageInputRef.value) imageInputRef.value.value = '';
 }
 function onFileFilesPicked(e: Event) {
   const files = Array.from((e.target as HTMLInputElement).files || []);
-  if (files.length) handleFiles(files);
+  if (files.length) enqueueAttachments(files);
   if (fileInputRef.value) fileInputRef.value.value = '';
 }
 function onPasteImage(files: File[]) {
   // Bắt được khi user Ctrl+V image vào editor
-  handleImageFiles(files);
+  enqueueAttachments(files);
 }
 
 function hasDraggedFiles(event: DragEvent): boolean {
@@ -2359,45 +2391,106 @@ async function onDropFiles(event: DragEvent) {
     toast.error('Chọn cuộc trò chuyện trước khi gửi file');
     return;
   }
-  const imageFiles = files.filter((file) => file.type.startsWith('image/'));
-  const otherFiles = files.filter((file) => !file.type.startsWith('image/'));
-  if (imageFiles.length) await handleImageFiles(imageFiles);
-  if (otherFiles.length) await handleFiles(otherFiles);
+  enqueueAttachments(files);
 }
 
-async function handleImageFiles(files: File[]) {
-  if (!props.conversation?.id) return;
-  if (!files.length) return;
-  toast.push(`📷 Đang gửi ${files.length} ảnh…`);
-  try {
-    const fd = new FormData();
-    for (const f of files) fd.append('files', f, f.name);
-    await api.post(`/conversations/${props.conversation.id}/attachments`, fd, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
-    toast.success(`Đã gửi ${files.length} ảnh`);
-    emit('refresh-thread');
-  } catch (err) {
-    const detail = (err as { response?: { data?: { error?: string } } })?.response?.data?.error || 'Upload thất bại';
-    toast.error(`Lỗi gửi ảnh: ${detail}`);
-    console.error('[upload-image]', err);
-  }
+// ── Khay chờ đính kèm (2026-09-04) ─────────────────────────────────────────
+// Bug người dùng báo: "gửi ảnh bị chia làm 2 tin nhắn". Trước đây chọn/paste/kéo-thả
+// là POST /attachments NGAY, chữ đang gõ ở lại ô soạn → phải Enter lần nữa → khách
+// nhận 2 tin. Giờ đính kèm nằm chờ trong khay, bấm Gửi mới đi và chữ đi kèm làm
+// `caption` trong CÙNG request. Quy tắc gửi tách ở composer-send-rules.ts (có test).
+interface PendingItem {
+  id: string;
+  kind: 'image' | 'video' | 'file';
+  file: File;
+  name: string;
+  /** objectURL để xem trước ảnh — phải revoke khi bỏ khỏi khay, tránh rò bộ nhớ. */
+  previewUrl: string | null;
 }
-async function handleFiles(files: File[]) {
-  if (!props.conversation?.id) return;
-  if (!files.length) return;
-  toast.push(`📎 Đang gửi ${files.length} file…`);
+const pendingAttachments = ref<PendingItem[]>([]);
+/** Riêng cho đường đính kèm — `sending` là prop của cha, không gán được ở đây. */
+const attachmentSending = ref(false);
+
+function attachmentKindOf(file: File): 'image' | 'video' | 'file' {
+  if (file.type.startsWith('image/')) return 'image';
+  if (file.type.startsWith('video/')) return 'video';
+  return 'file';
+}
+
+function enqueueAttachments(files: File[]) {
+  if (!props.conversation?.id || !files.length) return;
+  for (const file of files) {
+    const kind = attachmentKindOf(file);
+    pendingAttachments.value.push({
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      kind,
+      file,
+      name: file.name,
+      previewUrl: kind === 'image' ? URL.createObjectURL(file) : null,
+    });
+  }
+  // Focus lại ô soạn để gõ caption ngay, không phải click thêm.
+  nextTick(() => editorRef.value?.focus('end'));
+}
+
+function removePendingAttachment(id: string) {
+  const idx = pendingAttachments.value.findIndex((p) => p.id === id);
+  if (idx === -1) return;
+  const [removed] = pendingAttachments.value.splice(idx, 1);
+  if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl);
+}
+
+function clearPendingAttachments() {
+  for (const p of pendingAttachments.value) {
+    if (p.previewUrl) URL.revokeObjectURL(p.previewUrl);
+  }
+  pendingAttachments.value = [];
+}
+
+// Đổi hội thoại → bỏ khay, tránh lỡ tay gửi ảnh của khách này sang khách khác.
+watch(() => props.conversation?.id, () => clearPendingAttachments());
+onBeforeUnmount(() => clearPendingAttachments());
+
+/**
+ * Cảnh báo khi vừa Reply vừa đính kèm. zca-js KHÔNG gắn được quote vào tin ảnh
+ * (handleAttachment nhận quote nhưng không sinh param qmsg*) → có chữ thì Zalo tách tin
+ * chữ-mang-quote ra trước; không có chữ thì quote mất hẳn. Nói trước cho sale biết còn
+ * hơn để họ tưởng đã trả lời xong.
+ */
+const pendingReplyHint = computed<string | null>(() => {
+  if (!pendingAttachments.value.length || !props.replyingTo) return null;
+  return inputText.value.trim()
+    ? 'Zalo không cho trả lời kèm ảnh trong cùng 1 tin — phần chữ trả lời sẽ đi thành tin riêng.'
+    : 'Ảnh trần không mang được nội dung trả lời — gõ thêm chữ thì mới giữ được ngữ cảnh.';
+});
+
+/** Gửi cả khay + caption trong 1 request. Trả về true nếu gửi xong. */
+async function sendPendingAttachments(caption: string): Promise<boolean> {
+  if (!props.conversation?.id || !pendingAttachments.value.length) return false;
+  const items = [...pendingAttachments.value];
+  const label = items.length === 1 ? items[0].name : `${items.length} tệp`;
+  attachmentSending.value = true;
+  toast.push(`📤 Đang gửi ${label}…`);
   try {
     const fd = new FormData();
-    for (const f of files) fd.append('files', f, f.name);
+    for (const p of items) fd.append('files', p.file, p.name);
+    if (caption) fd.append('caption', caption);
+    // Đang Reply → gửi kèm để BE dựng quote. Trước đây trạng thái trả lời bị nuốt im lặng.
+    if (props.replyingTo?.id) fd.append('replyMessageId', props.replyingTo.id);
     await api.post(`/conversations/${props.conversation.id}/attachments`, fd, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
-    toast.success(`Đã gửi ${files.length} file`);
+    clearPendingAttachments();
+    toast.success(`Đã gửi ${label}`);
     emit('refresh-thread');
+    return true;
   } catch (err) {
     const detail = (err as { response?: { data?: { error?: string } } })?.response?.data?.error || 'Upload thất bại';
-    toast.error(`Lỗi gửi file: ${detail}`);
+    toast.error(`Lỗi gửi đính kèm: ${detail}`);
+    console.error('[upload-attachment]', err);
+    return false;
+  } finally {
+    attachmentSending.value = false;
   }
 }
 
@@ -2855,10 +2948,10 @@ async function dispatchBlockComponents(blockId: string) {
 }
 
 // ── Send ────────────────────────────────────────────────────────────────────
-function handleSend() {
+async function handleSend() {
   if (showTemplatePopup.value) { showTemplatePopup.value = false; return; }
   if (isArchivedNick.value) return; // T11: nick đã xóa → chặn gửi (Enter + nút). Khóa mềm UX.
-  if (!inputText.value.trim()) return;
+  if (attachmentSending.value) return; // đang upload → chặn double-send
 
   // 2026-05-21 fix: lấy rich payload {text, styles} từ editor để gửi format đi Zalo.
   // Nếu không có styles → behaves như plain text (backward compat).
@@ -2868,7 +2961,27 @@ function handleSend() {
   // 2026-06-24: @mention thành viên nhóm — chỉ gửi khi có mention (group thread).
   const mentions = Array.isArray(rich.mentions) && rich.mentions.length > 0 ? rich.mentions : undefined;
 
-  if (props.editingMessage) {
+  const plan = planComposerSend({
+    text: textToSend,
+    pending: pendingAttachments.value,
+    isEditing: !!props.editingMessage,
+  });
+
+  if (plan.action === 'none') return;
+
+  if (plan.action === 'attachments') {
+    // Chữ + đính kèm đi CHUNG 1 request → Zalo gộp caption vào tin ảnh (1 ảnh
+    // jpg/png/webp). Nhiều ảnh / gif / có quote thì zca-js buộc tách chữ ra tin riêng —
+    // giới hạn của Zalo, không sửa được ở đây.
+    const ok = await sendPendingAttachments(plan.caption);
+    if (!ok) return; // giữ nguyên chữ + khay để sale thử lại, KHÔNG mất nội dung
+    inputText.value = '';
+    editorRef.value?.clear();
+    emit('cancel-reply-edit');
+    return;
+  }
+
+  if (plan.action === 'edit' && props.editingMessage) {
     emit('edit-message', props.editingMessage.id, textToSend);
   } else {
     emit('send', textToSend, props.replyingTo?.id ?? null, styles, mentions);
@@ -3949,6 +4062,48 @@ watch(() => props.editingMessage?.id, async (id) => {
   margin-right: 4px; padding-right: 4px;
 }
 .icon-tool.ai-btn { color: #9c27b0; }
+
+/* Khay chờ đính kèm — nằm ngay trên ô soạn, cuộn ngang khi chọn nhiều tệp. */
+.pending-tray {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 4px; margin-bottom: 4px;
+  overflow-x: auto;
+  border-bottom: 1px dashed var(--smax-grey-200);
+}
+.pending-item {
+  position: relative; flex: 0 0 auto;
+  width: 56px; height: 56px;
+  border: 1px solid var(--smax-grey-200); border-radius: 8px;
+  overflow: hidden; background: var(--smax-grey-50, #fafafa);
+}
+.pending-item-file {
+  display: flex; align-items: center; gap: 6px;
+  width: auto; max-width: 190px; height: 40px;
+  padding: 0 26px 0 10px;
+}
+.pending-name {
+  font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.pending-thumb { width: 100%; height: 100%; object-fit: cover; display: block; }
+.pending-remove {
+  position: absolute; top: 2px; right: 2px;
+  width: 18px; height: 18px; line-height: 1;
+  border: none; border-radius: 50%;
+  background: rgba(0, 0, 0, .55); color: #fff;
+  font-size: 11px; cursor: pointer;
+}
+.pending-remove:hover { background: rgba(0, 0, 0, .8); }
+.pending-remove:disabled { opacity: .4; cursor: default; }
+.pending-clear {
+  flex: 0 0 auto; border: none; background: none;
+  color: var(--smax-grey-600, #666); font-size: 12px; cursor: pointer;
+  text-decoration: underline;
+}
+.pending-clear:disabled { opacity: .4; cursor: default; }
+.pending-hint {
+  padding: 0 4px 6px; font-size: 12px; line-height: 1.4;
+  color: var(--smax-warning-700, #8a6d00);
+}
 
 .input-row {
   /* Anh chốt 2026-05-22 (issue 3): sticker avatar căn giữa trục dọc với editor.

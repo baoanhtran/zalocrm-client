@@ -24,7 +24,7 @@ import { compressImage } from '../media/media-service.js';
 import { logger } from '../../shared/utils/logger.js';
 // Fix 2026-06-03 — M11 optimistic badge cache (Anh báo "Sale CRM · Staff")
 // 2026-06-11 — createMediaMessage gộp 4 block message.create lặp (DRY, eng review E4).
-import { getUserFullName, createMediaMessage } from './chat-helpers.js';
+import { getUserFullName, createMediaMessage, buildReplyQuote } from './chat-helpers.js';
 
 export const IMAGE_MAX = 100 * 1024 * 1024;
 export const VIDEO_MAX = 500 * 1024 * 1024;
@@ -107,11 +107,14 @@ export async function chatAttachmentRoutes(app: FastifyInstance) {
 
       // Parse multipart parts
       let caption = '';
+      let replyMessageId = '';
       const files: ParsedFile[] = [];
       try {
         for await (const part of request.parts()) {
           if (part.type === 'field' && part.fieldname === 'caption') {
             caption = String(part.value ?? '');
+          } else if (part.type === 'field' && part.fieldname === 'replyMessageId') {
+            replyMessageId = String(part.value ?? '').trim();
           } else if (part.type === 'file') {
             if (!isAllowed(part.mimetype)) {
               return reply.status(415).send({ error: `Unsupported file type: ${part.mimetype}` });
@@ -134,6 +137,33 @@ export async function chatAttachmentRoutes(app: FastifyInstance) {
       const threadId = conversation.externalThreadId || '';
       const threadType = conversation.threadType === 'group' ? 1 : 0;
       const io = (app as any).io as Server;
+
+      // 2026-09-04 (ô soạn gộp chữ + đính kèm vào 1 request): caption chỉ được đi ĐÚNG
+      // 1 lần. Trước đây cùng chuỗi đó nhét vào cả 3 nhánh gửi (batch ảnh / mỗi video /
+      // mỗi file) — FE chưa gửi caption nên chưa ai thấy. Khi sale chọn hỗn hợp ảnh +
+      // file, khách sẽ nhận caption LẶP lại. Nhánh gửi đầu tiên nhận caption, phần còn
+      // lại nhận ''.
+      let captionLeft = caption;
+      const takeCaption = (): string => {
+        const c = captionLeft;
+        captionLeft = '';
+        return c;
+      };
+
+      // 2026-09-04: đính kèm trong lúc đang Reply. Trước đây route bỏ qua replyMessageId
+      // hoàn toàn → trạng thái trả lời bị nuốt IM LẶNG, khách nhận ảnh trơ không rõ đang
+      // nói về tin nào. LƯU Ý zca-js: quote chỉ gắn được vào tin CHỮ (handleAttachment
+      // nhận quote nhưng không sinh param qmsg* nào) → có caption thì thư viện gửi tin
+      // chữ-mang-quote trước rồi mới tới đính kèm; caption rỗng thì quote không đi được.
+      // Không gộp 1 tin được — giới hạn thư viện, FE báo trước cho sale.
+      let quote: ReturnType<typeof buildReplyQuote> = null;
+      if (replyMessageId) {
+        const replyMessage = await prisma.message.findFirst({
+          where: { id: replyMessageId, conversationId: id },
+          select: { zaloMsgId: true, senderUid: true, content: true, contentType: true, sentAt: true },
+        });
+        if (replyMessage) quote = buildReplyQuote(replyMessage);
+      }
 
       // Write each file to tmp + upload to MinIO in parallel
       const tmpRoot = path.join(tmpdir(), 'zalocrm-upload', randomUUID());
@@ -171,7 +201,7 @@ export async function chatAttachmentRoutes(app: FastifyInstance) {
           zaloRateLimiter.recordSend(conversation.zaloAccountId);
           const paths = imageIndexes.map((i) => tmpPaths[i]);
           const sendResult: any = await instance.api.sendMessage(
-            { msg: caption, attachments: paths },
+            { msg: takeCaption(), attachments: paths, ...(quote ? { quote } : {}) },
             threadId,
             threadType,
           );
@@ -195,6 +225,9 @@ export async function chatAttachmentRoutes(app: FastifyInstance) {
         // Send videos one-by-one using native sendVideo
         for (const i of videoIndexes) {
           zaloRateLimiter.recordSend(conversation.zaloAccountId);
+          // Lấy caption 1 lần cho CẢ đường native lẫn đường fallback bên dưới — nếu gọi
+          // takeCaption() riêng ở mỗi nhánh thì native lỗi sẽ nuốt mất caption.
+          const videoCaption = takeCaption();
           let generatedThumbnail: Awaited<ReturnType<typeof generateThumbnail>> | null = null;
           let thumbnailMirror: UploadResult | null = null;
           try {
@@ -212,7 +245,7 @@ export async function chatAttachmentRoutes(app: FastifyInstance) {
               thumbnailPath: generatedThumbnail?.path,
               threadId,
               threadType: threadType as 0 | 1,
-              message: caption,
+              message: videoCaption,
             });
             const zaloMsgId = String((sendResult as any)?.msgId || (sendResult as any)?.data?.msgId || '');
             const mirror = mirrors[i];
@@ -237,6 +270,7 @@ export async function chatAttachmentRoutes(app: FastifyInstance) {
               threadType as 0 | 1,
               [tmpPaths[i]],
               io,
+              videoCaption,
             );
             const zaloMsgId = String(sendResult?.msgId || sendResult?.data?.msgId || '');
             const mirror = mirrors[i];
@@ -264,7 +298,7 @@ export async function chatAttachmentRoutes(app: FastifyInstance) {
             threadType as 0 | 1,
             [tmpPaths[i]],
             io,
-            caption,
+            takeCaption(),
           );
           const zaloMsgId = String(sendResult?.msgId || sendResult?.data?.msgId || '');
           const mirror = mirrors[i];

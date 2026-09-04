@@ -100,6 +100,12 @@ export function mockPrisma() {
       create: vi.fn(),
       update: vi.fn(),
     },
+    // getUserFullName (chat-helpers) tra User.fullName mỗi tin gửi — thiếu model này
+    // thì route ném TypeError trước cả try/catch → 500 không rõ nguyên nhân.
+    user: {
+      findUnique: vi.fn(),
+      findFirst: vi.fn(),
+    },
   };
 }
 

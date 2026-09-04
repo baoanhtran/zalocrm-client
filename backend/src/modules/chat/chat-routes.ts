@@ -25,7 +25,7 @@ import { triggerVirtualChatAiReply } from '../ai/ai-virtual-chat-service.js';
 // M55 2026-05-30 — Auto-attach collaborator khi sale gửi tin virtual conv
 import { attachContactCollaboratorByUser } from '../contacts/contact-scope.js';
 // Fix 2026-06-03 — M11 optimistic badge cache (Anh báo "Sale CRM · Staff")
-import { getUserFullName } from './chat-helpers.js';
+import { getUserFullName, buildReplyQuote } from './chat-helpers.js';
 // 2026-06-07 — Gửi Khối Marketing thẳng vào hội thoại (cột 4 tab Automation).
 import { zaloOps } from '../../shared/zalo-operations.js';
 import { sendNativeVideo } from '../../shared/video-processor.js';
@@ -65,58 +65,6 @@ async function resolveMediaMeta(
     } catch { /* giữ fallback */ }
   }
   return { name, mime, size };
-}
-
-function mapReplyMsgType(contentType: string): string {
-  if (contentType === 'text') return 'webchat';
-  if (contentType === 'image') return 'photo';
-  if (contentType === 'file') return 'file';
-  if (contentType === 'video') return 'video';
-  if (contentType === 'voice') return 'voice';
-  if (contentType === 'sticker') return 'sticker';
-  if (contentType === 'gif') return 'gif';
-  if (contentType === 'link') return 'link';
-  if (contentType === 'location') return 'location';
-  if (contentType === 'contact_card') return 'card';
-  if (contentType === 'bank_transfer') return 'bank';
-  if (contentType === 'call') return 'call';
-  if (contentType === 'qr_code') return 'qr';
-  if (contentType === 'reminder') return 'remind';
-  if (contentType === 'poll') return 'poll';
-  if (contentType === 'note') return 'note';
-  if (contentType === 'forwarded') return 'forward';
-  return contentType;
-}
-
-function buildReplyQuote(message: {
-  zaloMsgId: string | null;
-  senderUid: string | null;
-  content: string | null;
-  contentType: string;
-  sentAt: Date;
-}) {
-  if (!message.zaloMsgId || !message.senderUid) return null;
-  let quoteContent = message.content ?? '';
-  if (['image', 'video', 'file'].includes(message.contentType) && quoteContent.startsWith('{')) {
-    try {
-      const p = JSON.parse(quoteContent);
-      if (message.contentType === 'image') quoteContent = '[Hình ảnh]';
-      else if (message.contentType === 'video') quoteContent = '[Video]';
-      else quoteContent = `[Tệp] ${p.name || ''}`.trim();
-    } catch {
-      quoteContent = `[${message.contentType}]`;
-    }
-  }
-  return {
-    content: quoteContent,
-    msgType: mapReplyMsgType(message.contentType),
-    propertyExt: {},
-    uidFrom: message.senderUid,
-    msgId: message.zaloMsgId,
-    cliMsgId: message.zaloMsgId,
-    ts: String(message.sentAt.getTime()),
-    ttl: 0,
-  };
 }
 
 // Cooldown cho POST /conversations/:id/touch-profile — tránh spam Zalo SDK.
@@ -1762,17 +1710,40 @@ export async function chatRoutes(app: FastifyInstance) {
         // 2026-06-15 IDEMPOTENCY RACE: 2 request cùng echoId chạy ~đồng thời → create
         // thứ 2 ném P2002 (unique violation conversationId_clientEchoId). Đã gửi Zalo
         // rồi nhưng tin đã được request kia lưu → query lại tin đó & trả về, KHÔNG 500.
-        if (echoId && (createErr as { code?: string })?.code === 'P2002') {
-          const winner = await prisma.message.findUnique({
-            where: { conversationId_clientEchoId: { conversationId: id, clientEchoId: echoId } },
-            include: { repliedBy: { select: { id: true, fullName: true, email: true } } },
-          });
-          if (winner) {
-            return {
-              ...winner,
-              zaloMsgIdNum: winner.zaloMsgIdNum?.toString() ?? null,
-              echoId,
-            };
+        if ((createErr as { code?: string })?.code === 'P2002') {
+          if (echoId) {
+            const winner = await prisma.message.findUnique({
+              where: { conversationId_clientEchoId: { conversationId: id, clientEchoId: echoId } },
+              include: { repliedBy: { select: { id: true, fullName: true, email: true } } },
+            });
+            if (winner) {
+              return {
+                ...winner,
+                zaloMsgIdNum: winner.zaloMsgIdNum?.toString() ?? null,
+                echoId,
+              };
+            }
+          }
+
+          // 2026-09-04 ECHO RACE (anh báo toast "Không gửi được tin nhắn" nhưng khách VẪN
+          // nhận được): Zalo đã nhận tin, listener selfListen chèn row trước khi route kịp
+          // create → P2002 unique (conversationId, zaloMsgId). Nhánh echoId ở trên KHÔNG
+          // cứu được vì web không gửi echoId (field đó của app mobile). Kết quả: 500 giả →
+          // sale gửi lại → khách nhận TRÙNG. Sửa: tin đã nằm sẵn trong DB rồi, trả về
+          // chính row đó. Listener cũng đã tự update conversation + emit socket nên KHÔNG
+          // cần chạy tiếp phần dưới.
+          if (zaloMsgId) {
+            const winner = await prisma.message.findUnique({
+              where: { conversationId_zaloMsgId: { conversationId: id, zaloMsgId } },
+              include: { repliedBy: { select: { id: true, fullName: true, email: true } } },
+            });
+            if (winner) {
+              return {
+                ...winner,
+                zaloMsgIdNum: winner.zaloMsgIdNum?.toString() ?? null,
+                echoId,
+              };
+            }
           }
         }
         throw createErr;

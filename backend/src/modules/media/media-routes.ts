@@ -497,7 +497,9 @@ export async function mediaRoutes(app: FastifyInstance) {
             tagIds,
             folderId,
           });
-          created.push({ id: res.asset.id, name: res.asset.name, deduped: res.deduped });
+          // Trả visibility THẬT của asset: dedup-hit dùng lại asset cũ và GIỮ quyền cũ của nó
+          // (không tự nâng ảnh người khác lên Công khai), nên FE phải đọc số này mới báo đúng.
+          created.push({ id: res.asset.id, name: res.asset.name, deduped: res.deduped, visibility: res.asset.visibility });
         }
         if (created.length === 0) return reply.status(400).send({ error: 'Không có tệp nào' });
         return { assets: created };

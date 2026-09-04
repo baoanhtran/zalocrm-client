@@ -77,7 +77,7 @@ export async function listMediaUploaders(
 export async function uploadMedia(
   files: File[],
   opts: { visibility?: 'private' | 'public'; folderId?: string; tagIds?: string[] } = {},
-): Promise<{ assets: Array<{ id: string; name: string; deduped: boolean }> }> {
+): Promise<{ assets: Array<{ id: string; name: string; deduped: boolean; visibility: 'private' | 'public' }> }> {
   const form = new FormData();
   for (const f of files) form.append('files', f);
   if (opts.visibility) form.append('visibility', opts.visibility);

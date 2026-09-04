@@ -439,9 +439,22 @@ async function onFilesPicked(e: Event) {
   const files = Array.from(input.files ?? []);
   if (!files.length) return;
   try {
-    const res = await uploadMedia(files, { visibility: 'private', folderId: activeFolder.value ?? undefined });
+    // Anh chốt 2026-09-04: ảnh TỰ TẢI LÊN mặc định CÔNG KHAI — đây là tài sản dùng chung
+    // (bảng giá, mặt bằng, brochure), để private thì sale khác không thấy, vô dụng. Ảnh nào
+    // muốn giữ riêng thì đổi lại ở panel chi tiết. Lưu ý: chỉ luồng NÀY đổi — "Lưu từ chat"
+    // vẫn mặc định Kho cá nhân vì đó là ảnh KHÁCH gửi, có thể chứa thông tin riêng của họ.
+    const res = await uploadMedia(files, { visibility: 'public', folderId: activeFolder.value ?? undefined });
     const dup = res.assets.filter((a) => a.deduped).length;
-    toast.success(dup > 0 ? `Đã tải ${res.assets.length} tệp (${dup} đã có sẵn, không tốn thêm dung lượng)` : `Đã tải ${res.assets.length} tệp lên kho`);
+    // Nói rõ quyền trong toast — sale phải biết ảnh vừa tải cả tổ chức nhìn thấy được. Đọc
+    // visibility BE trả về chứ không mặc định 'Công khai': tệp trùng dùng lại asset cũ và
+    // giữ quyền cũ, nói bừa "Công khai" là sai.
+    const rieng = res.assets.filter((a) => a.visibility !== 'public').length;
+    const quyen = rieng === 0 ? ' — Công khai'
+      : rieng === res.assets.length ? ' — Riêng tư (tệp đã có sẵn, giữ quyền cũ)'
+      : ` — ${res.assets.length - rieng} Công khai, ${rieng} giữ quyền cũ`;
+    toast.success(dup > 0
+      ? `Đã tải ${res.assets.length} tệp (${dup} đã có sẵn, không tốn thêm dung lượng)${quyen}`
+      : `Đã tải ${res.assets.length} tệp lên kho${quyen}`);
     reload();
   } catch (err: any) {
     toast.warning(err?.response?.data?.error || 'Tải lên thất bại');

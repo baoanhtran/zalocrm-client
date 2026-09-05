@@ -205,6 +205,7 @@
         <!-- colgroup: pin width cứng cho mọi cột → hàng con (row-child) có colspan
              vẫn gióng chính xác theo cột cha. (2026-06-04) -->
         <colgroup>
+          <col style="width:44px">   <!-- 0 STT — đủ chỗ 4 chữ số (KH thứ 1.000+) -->
           <col style="width:26px">   <!-- 1 caret -->
           <col style="width:158px">  <!-- 2 Tên (gộp avatar+tên, KHÔNG colspan) -->
           <col style="width:100px">  <!-- 3 SĐT -->
@@ -230,6 +231,7 @@
         </colgroup>
         <thead>
           <tr>
+            <th class="th-stt" title="Số thứ tự — đếm liên tục qua các trang">STT</th>
             <th></th>
             <th>Tên CRM / Zalo (KH)</th>
             <th>SĐT</th>
@@ -254,7 +256,7 @@
           </tr>
         </thead>
         <tbody>
-          <template v-for="contact in contacts" :key="contact.id">
+          <template v-for="(contact, rowIdx) in contacts" :key="contact.id">
             <tr
               class="master-row"
               :class="{
@@ -266,6 +268,8 @@
               :data-contact-id="contact.id"
               @click="onRowClick($event, contact.id)"
             >
+              <!-- col0: STT -->
+              <td class="cl-stt">{{ rowNumber(rowIdx) }}</td>
               <!-- col1: caret -->
               <td class="cl-caret-cell">
                 <button class="cl-caret" @click.stop="toggleExpand(contact.id)">
@@ -476,7 +480,9 @@
                   v-for="(row, idx) in childRows(contact)" :key="row.id"
                   class="fr-row" :class="[frKbClass(row.relationshipKind), { 'is-last': idx === childRows(contact).length - 1 }]"
                 >
-                  <!-- col1: caret-slot trống (giữ thẳng cột với caret cha) -->
+                  <!-- col0+1: STT + caret bỏ trống — nick chăm không phải KH nên KHÔNG
+                       đánh số; để trống mới giữ thẳng cột với hàng cha. -->
+                  <td class="cl-stt"></td>
                   <td class="cl-caret-cell"></td>
                   <!-- col2 Tên: avatar + nick + 🏆 + chấm chat + alias (cùng pattern .cl-name như cha
                        → avatar con thẳng dọc avatar cha, accent = inset shadow trái) -->
@@ -738,8 +744,21 @@ function toggleColumn(key: OptColKey) {
 const totalColumnsCount = computed(() =>
   // 2026-06-04: gộp avatar+tên thành 1 cột (caret riêng) → 15 cột cố định.
   // 2026-06-17: cột UID giờ thuộc child-toggle (per-nick) → cộng riêng.
-  15 + Object.values(visibleCols.value).filter(Boolean).length + (visibleChildCols.value.zaloUid ? 1 : 0),
+  // 2026-09-05: thêm cột STT đứng đầu → 16.
+  16 + Object.values(visibleCols.value).filter(Boolean).length + (visibleChildCols.value.zaloUid ? 1 : 0),
 );
+
+/**
+ * Số thứ tự của hàng, đếm LIÊN TỤC qua các trang: trang 2 (20 dòng/trang) bắt đầu từ 21
+ * chứ không quay về 1. Đánh lại từ 1 mỗi trang thì hai khách khác nhau cùng mang số 1,
+ * gọi nhau qua điện thoại là loạn ngay.
+ *
+ * Số này bám theo THỨ TỰ ĐANG SẮP, không phải mã khách — đổi bộ lọc hay bấm sắp theo
+ * điểm thì cùng một khách sẽ mang số khác.
+ */
+function rowNumber(idx: number): number {
+  return (pagination.page - 1) * pagination.limit + idx + 1;
+}
 
 // Child (KH Con) optional cols — riêng vì bản chất per-Friend chứ không aggregate.
 // 2026-06-17: UID chuyển hẳn về đây (per-nick) — Cha không có UID.
@@ -1919,11 +1938,12 @@ watch(
      (middle đẩy dòng tên đầu lên cao hơn avatar khi cụm tên >1 dòng → "tên nhảy lên"). */
   vertical-align: top;
 }
-/* 2026-06-04: cột avatar (td thứ 2) padding ngang nhỏ + căn giữa → avatar 26px KHÔNG
-   tràn sang cột tên (cột chỉ 30px, padding 8px 2 bên chỉ chừa 14px). Áp cho hàng cha. */
-.smax-table tbody tr.master-row > td:nth-child(2) { padding-left: 2px; padding-right: 2px; text-align: center; }
-.smax-table tbody tr.master-row > td:nth-child(2) :deep(.v-avatar),
-.smax-table tbody tr.master-row > td:nth-child(2) > * { vertical-align: middle; }
+/* 2026-06-04: cột avatar padding ngang nhỏ + căn giữa → avatar 26px KHÔNG tràn sang
+   cột tên. Áp cho hàng cha.
+   2026-09-05: chèn cột STT lên đầu → ô Tên dời từ td thứ 2 sang thứ 3. */
+.smax-table tbody tr.master-row > td:nth-child(3) { padding-left: 2px; padding-right: 2px; text-align: center; }
+.smax-table tbody tr.master-row > td:nth-child(3) :deep(.v-avatar),
+.smax-table tbody tr.master-row > td:nth-child(3) > * { vertical-align: middle; }
 /* 14 cột cố định — tổng 1020px (đo thật @1366: usable wrap = 1330) để 2 cột
    tin nhắn .w-msg (width:auto) tự lấy phần còn lại ~155px mỗi cột → không scroll. */
 .w-26 { width: 26px; }
@@ -2441,31 +2461,36 @@ watch(
   flex-direction: column;
 }
 
-/* ── Mode 2 shrunk: 15 cột — chỉ hiện Tên(2), Trạng thái(6), Có Zalo(14), Action(cuối).
-   Ẩn caret(1), SĐT(3), Tỉnh(4), Nguồn(5), Score(7), Nick(8), Sale(9), 2 msg(10,11),
-   Tin(12), Tags(13). (Optional Zalo cols giữa 14 và Action: nếu bật sẽ hiện — hiếm dùng.) */
+/* ── Mode 2 shrunk: chỉ hiện Tên(3), Trạng thái(7), Có Zalo(15), Action(cuối).
+   Ẩn STT(1), caret(2), SĐT(4), Tỉnh(5), Nguồn(6), Score(8), Nick(9), Sale(10),
+   2 msg(11,12), Tin(13), Tags(14).
+   2026-09-05: chèn cột STT lên đầu → mọi chỉ số dưới đây dịch +1; STT cũng ẩn ở đây
+   vì pane hẹp chỉ đủ chỗ cho Tên + Trạng thái + Có Zalo.
+   (Optional Zalo cols giữa Có Zalo và Action: nếu bật sẽ hiện — hiếm dùng.) */
 .smax-table.mode-shrunk thead th:nth-child(1),
-.smax-table.mode-shrunk thead th:nth-child(3),
+.smax-table.mode-shrunk thead th:nth-child(2),
 .smax-table.mode-shrunk thead th:nth-child(4),
 .smax-table.mode-shrunk thead th:nth-child(5),
-.smax-table.mode-shrunk thead th:nth-child(7),
+.smax-table.mode-shrunk thead th:nth-child(6),
 .smax-table.mode-shrunk thead th:nth-child(8),
 .smax-table.mode-shrunk thead th:nth-child(9),
 .smax-table.mode-shrunk thead th:nth-child(10),
 .smax-table.mode-shrunk thead th:nth-child(11),
 .smax-table.mode-shrunk thead th:nth-child(12),
 .smax-table.mode-shrunk thead th:nth-child(13),
+.smax-table.mode-shrunk thead th:nth-child(14),
 .smax-table.mode-shrunk tbody td:nth-child(1),
-.smax-table.mode-shrunk tbody td:nth-child(3),
+.smax-table.mode-shrunk tbody td:nth-child(2),
 .smax-table.mode-shrunk tbody td:nth-child(4),
 .smax-table.mode-shrunk tbody td:nth-child(5),
-.smax-table.mode-shrunk tbody td:nth-child(7),
+.smax-table.mode-shrunk tbody td:nth-child(6),
 .smax-table.mode-shrunk tbody td:nth-child(8),
 .smax-table.mode-shrunk tbody td:nth-child(9),
 .smax-table.mode-shrunk tbody td:nth-child(10),
 .smax-table.mode-shrunk tbody td:nth-child(11),
 .smax-table.mode-shrunk tbody td:nth-child(12),
-.smax-table.mode-shrunk tbody td:nth-child(13) {
+.smax-table.mode-shrunk tbody td:nth-child(13),
+.smax-table.mode-shrunk tbody td:nth-child(14) {
   display: none;
 }
 /* 2026-06-05 (Anh: list scale xấu ở mode Chi tiết) — ẩn cột phụ (UID/GlobalId/
@@ -2487,10 +2512,14 @@ watch(
 }
 /* Vô hiệu width cứng của colgroup ở mode shrunk (col width ép table rộng dù td ẩn). */
 .smax-table.mode-shrunk colgroup col { width: auto !important; }
-.smax-table.mode-shrunk thead th:nth-child(3) { width: 220px; }   /* Tên */
-.smax-table.mode-shrunk thead th:nth-child(4) { width: 110px; }   /* SĐT */
-.smax-table.mode-shrunk thead th:nth-child(8) { width: 110px; }   /* Trạng thái KH */
-.smax-table.mode-shrunk thead th:nth-child(16) { width: 110px; }  /* Có Zalo? */
+/* CẢNH BÁO: 4 rule dưới đây vốn đã trỏ SAI cột so với chú thích của chúng (từ trước
+   thay đổi 2026-09-05) và đều rơi vào cột đang display:none nên KHÔNG có tác dụng.
+   Dịch +1 theo cột STT mới để giữ đúng hiện trạng — cố ý không "sửa cho đúng nhãn",
+   vì làm thế sẽ kích hoạt rule chưa ai nhìn thấy hiệu ứng bao giờ. */
+.smax-table.mode-shrunk thead th:nth-child(4) { width: 220px; }
+.smax-table.mode-shrunk thead th:nth-child(5) { width: 110px; }
+.smax-table.mode-shrunk thead th:nth-child(9) { width: 110px; }
+.smax-table.mode-shrunk thead th:nth-child(17) { width: 110px; }
 .smax-table.mode-shrunk thead th { white-space: nowrap; }
 .smax-table.mode-shrunk tbody td {
   white-space: nowrap;
@@ -2628,7 +2657,20 @@ watch(
    (align-items: flex-start) → avatar luôn thẳng dòng tên đầu, dù tên nhiều dòng.
    Hàng con (fr-row) dùng cùng pattern → avatar con thẳng dọc avatar cha. */
 
-/* ô caret (cột 1) */
+/* Cột STT (cột 1) — số phụ trợ, cố ý nhạt hơn dữ liệu thật để mắt không bị nó kéo đi.
+   tabular-nums giữ các chữ số cùng bề rộng nên cột số thẳng hàng dọc. */
+.cl-stt {
+  text-align: center;
+  padding-left: 2px;
+  padding-right: 2px;
+  color: var(--smax-grey-700);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.th-stt { text-align: center; }
+
+/* ô caret (cột 2) */
 .cl-caret-cell { text-align: center; padding-left: 2px; padding-right: 2px; }
 .cl-caret { width: 16px; height: 18px; line-height: 18px; padding: 0; background: none; border: 0; cursor: pointer; color: var(--smax-grey-700); font-size: 11px; }
 .cl-caret:hover { color: var(--smax-primary); }

@@ -26,6 +26,7 @@ import { getContactScope, assertContactVisible, attachContactCollaboratorByUser,
 import { getZaloScope } from '../zalo/zalo-scope.js';
 import { runAutomationRules } from '../../shared/ee-registry/automation.js';
 import { normalizePhone } from '../../shared/utils/phone.js';
+import { SOURCE_SURVEY, SOURCE_SURVEY_PREFIX } from '../../shared/contact-source.js';
 import { logActivity, computeDiff } from '../activity/activity-logger.js';
 import { emitWebhook } from '../api/webhook-service.js';
 
@@ -67,7 +68,18 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
         where.id = { in: cScope.accessibleContactIds };
       }
       // Model B: mỗi Contact tự nó là "KH Cha"; con = Friend rows. KHÔNG filter parentContactId.
-      if (source) where.source = source;
+      // Nguồn khách: "khao-sat" là nguồn GỘP — khách khảo sát lưu source kèm tỉnh
+      // ("khao-sat:Hà Nội"), mỗi tỉnh một giá trị, nên so bằng sẽ ra 0 khách. Chọn gộp
+      // → khớp cả dạng có tỉnh lẫn dạng trống tỉnh (phiếu cũ/thiếu tỉnh vẫn phải hiện,
+      // nếu không sale mất khách mà không hiểu vì sao). Chọn đúng một tỉnh
+      // ("khao-sat:Hà Nội") → so bằng như thường.
+      // Đẩy vào where.AND để KHÔNG giẫm lên where.OR của ô tìm kiếm.
+      if (source === SOURCE_SURVEY) {
+        where.AND = where.AND ?? [];
+        where.AND.push({
+          OR: [{ source: SOURCE_SURVEY }, { source: { startsWith: SOURCE_SURVEY_PREFIX } }],
+        });
+      } else if (source) where.source = source;
       if (status) where.status = status;
       if (statusId) where.statusId = statusId;
       if (assignedUserId) where.assignedUserId = assignedUserId;
@@ -373,13 +385,24 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // ── GET /api/v1/contacts/sources — danh sách nguồn khách (distinct + count) ──
-  // Dùng cho dropdown bộ lọc "Nguồn khách" trên mobile. Bỏ null, sắp theo count desc.
-  app.get('/api/v1/contacts/sources', async (request: FastifyRequest, reply: FastifyReply) => {
+  // Bỏ null, sắp theo count desc. Nuôi optgroup "Khảo sát theo tỉnh" ở ô lọc Nguồn
+  // khách: mỗi phiếu lưu source "khao-sat:<Tỉnh>" nên danh mục tỉnh phải lấy từ dữ
+  // liệu thật, không hardcode được.
+  //
+  // 2026-09-05: thêm ContactScope. Endpoint này vốn nằm không ai gọi, và nó đếm THẲNG
+  // trên cả org — đem ra dùng nguyên trạng thì sale thấy "Khảo sát: Hà Nội (120)" rồi
+  // bấm vào chỉ ra 3 khách của mình, chưa kể lộ quy mô dữ liệu tổ chức.
+  app.get('/api/v1/contacts/sources', { preHandler: requireGrant('contact', 'access') }, async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const user = request.user!;
+      const where: any = { orgId: user.orgId, mergedInto: null, source: { not: null } };
+      const cScope = await getContactScope(user.id, user.orgId, user.role);
+      if (!cScope.isOrgAdmin && cScope.accessibleContactIds !== null) {
+        where.id = { in: cScope.accessibleContactIds };
+      }
       const grouped = await prisma.contact.groupBy({
         by: ['source'],
-        where: { orgId: user.orgId, mergedInto: null, source: { not: null } },
+        where,
         _count: { source: true },
         orderBy: { _count: { source: 'desc' } },
       });

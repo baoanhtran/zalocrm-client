@@ -645,6 +645,8 @@ model Contact {
   // bảng này thay vì chỉ assignedUserId.
   contactAccess     ContactAccess[]
   contactNotes      Note[]
+  // Quét nhóm → Khách hàng 2026-09-05: các dòng roster đã sinh ra khách này.
+  groupMembers      GroupMember[]
   // Phase 7 — Automation framework
   // automationTasks   AutomationTask[]  ← REMOVED 2026-06-01 Luồng Mục Tiêu M0
   // Phase Lead Pool 2026-05-24
@@ -1821,17 +1823,25 @@ model GroupMember {
   friendCheckedAt DateTime? @map("friend_checked_at")
   harvestedAt     DateTime  @default(now()) @map("harvested_at")
   lastSeenAt      DateTime  @default(now()) @map("last_seen_at") // lần quét gần nhất còn thấy
+  // Quét nhóm → Khách hàng 2026-09-05: thành viên này đã được thêm thành Contact nào.
+  // NULL = chưa thêm. Nhờ cột này mà bấm "Thêm vào khách hàng" lần hai không tạo
+  // trùng, vòng lặp "thêm tất cả" tiến được (mỗi lượt chỉ lấy contactId=null), và
+  // roster hiện được chip "Đã thêm". onDelete: SetNull — xoá khách KHÔNG được xoá
+  // mất dòng roster đã quét, chỉ cắt liên kết để lần sau thêm lại được.
+  contactId       String?   @map("contact_id")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
   org         Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   zaloAccount ZaloAccount  @relation(fields: [zaloAccountId], references: [id], onDelete: Cascade)
+  contact     Contact?     @relation(fields: [contactId], references: [id], onDelete: SetNull)
 
   @@unique([zaloAccountId, groupId, memberUid]) // dedup trong-group per nick
   @@index([zaloAccountId, groupId]) // list member 1 group
   @@index([orgId, memberUid]) // member ở những group nào (cross-group)
   @@index([zaloAccountId, isFriend]) // filter audience an toàn
+  @@index([zaloAccountId, contactId]) // "còn ai chưa thêm vào KH" trong 1 nick
   @@map("group_members")
 }
 

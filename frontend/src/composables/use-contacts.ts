@@ -291,12 +291,45 @@ export interface ContactFilters {
   sort?: 'score' | '' | null;        // 'score' = điểm cao lên đầu; rỗng = tương tác mới nhất
 }
 
+/**
+ * Nguồn khách — anh chốt 2026-09-05: bỏ hết nguồn cũ (FB/TT/GT/CN), chỉ còn hai
+ * nguồn app thực sự sinh ra khách.
+ *
+ * Khách khảo sát lưu source kèm tỉnh ("khao-sat:Hà Nội"), mỗi tỉnh một giá trị, nên
+ * `SOURCE_SURVEY` ở đây là nguồn GỘP — backend nhận nó thì lọc theo tiền tố. Danh sách
+ * tỉnh cụ thể lấy động từ GET /contacts/sources (xem surveyProvinceOptions ở
+ * ContactsView), không hardcode vì tỉnh nào có khách là do phiếu quyết định.
+ *
+ * Khách cũ trong DB vẫn giữ source cũ; sourceLabel() không tìm thấy thì hiện nguyên
+ * giá trị thô ("FB") thay vì nhãn tiếng Việt — chấp nhận, không đụng dữ liệu cũ.
+ */
+export const SOURCE_GROUP_SCAN = 'quet-nhom';
+export const SOURCE_SURVEY = 'khao-sat';
+export const SOURCE_SURVEY_PREFIX = `${SOURCE_SURVEY}:`;
+
 export const SOURCE_OPTIONS = [
-  { text: 'Facebook', value: 'FB' },
-  { text: 'TikTok', value: 'TT' },
-  { text: 'Giới thiệu', value: 'GT' },
-  { text: 'Cá nhân', value: 'CN' },
+  { text: 'Quét nhóm', value: SOURCE_GROUP_SCAN },
+  { text: 'Phiếu khảo sát', value: SOURCE_SURVEY },
 ];
+
+/**
+ * Nhãn hiển thị của một giá trị `Contact.source`.
+ *
+ * Để ở đây (không để riêng trong từng màn) vì màn Khách hàng, Báo cáo và biểu đồ
+ * Dashboard đều phải gọi tên nguồn giống nhau — ba bản sao là ba kiểu hiển thị lệch.
+ *
+ * Không nhận ra thì trả nguyên giá trị thô: khách cũ vẫn còn source 'FB'/'quick_add'
+ * trong DB, thà hiện đúng thứ đang lưu còn hơn nuốt mất thành ô trống.
+ */
+export function sourceLabel(value: string | null | undefined): string {
+  if (!value) return '—';
+  // Khách khảo sát mang source "khao-sat:Hà Nội" — bóc tỉnh ra cho người đọc.
+  if (value.startsWith(SOURCE_SURVEY_PREFIX)) {
+    const tinh = value.slice(SOURCE_SURVEY_PREFIX.length).trim();
+    return tinh ? `Khảo sát: ${tinh}` : 'Phiếu khảo sát';
+  }
+  return SOURCE_OPTIONS.find(o => o.value === value)?.text ?? value;
+}
 
 export const STATUS_OPTIONS = [
   { text: 'Mới', value: 'new' },

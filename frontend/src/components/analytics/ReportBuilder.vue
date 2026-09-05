@@ -97,6 +97,7 @@ import {
   Legend,
 } from 'chart.js';
 import type { CustomReportResult, SavedReport, ReportConfig } from '@/composables/use-analytics';
+import { SOURCE_OPTIONS } from '@/composables/use-contacts';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Tooltip, Legend);
 
@@ -138,7 +139,11 @@ const groupByOptions = [
   { title: 'Theo nguồn', value: 'source' },
 ];
 
-const sourceOptions = ['FB', 'TT', 'GT', 'CN', 'ZL'];
+// Dùng chung danh mục nguồn với màn Khách hàng thay vì bản sao hardcode cũ
+// (['FB','TT','GT','CN','ZL']) — nguồn đó không còn được gán cho ai nữa nên lọc theo
+// chúng luôn ra báo cáo rỗng. Chọn "Phiếu khảo sát" khớp mọi tỉnh: backend
+// custom-report so theo tiền tố cho đúng một giá trị gộp này.
+const sourceOptions = SOURCE_OPTIONS.map(o => ({ title: o.text, value: o.value }));
 
 const datasetColors = ['#42A5F5', '#66BB6A', '#FFA726', '#EF5350', '#AB47BC', '#26C6DA'];
 

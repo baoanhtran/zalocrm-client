@@ -1,6 +1,7 @@
 /**
  * group-scan-routes.test.ts — Integration tests for E1 group-scan routes.
- * Covers POST /group-scans (selected|all|400|403), GET /:scanId, GET /:scanId/members.
+ * Covers POST /group-scans (selected|all|400|403), GET /:scanId, GET /:scanId/members,
+ * POST /:scanId/to-contacts (thành viên đã quét → Khách hàng).
  *
  * Mirrors group-routes.test.ts: builds a Fastify app, registers the route plugin,
  * drives it via inject(); mocks at the prisma + zaloOps + zalo-route-helpers boundary.
@@ -19,8 +20,22 @@ vi.mock('../src/shared/database/prisma-client.js', () => ({
     zaloAccount: { findFirst: vi.fn() },
     zaloAccountAccess: { findFirst: vi.fn() },
     groupScan: { create: vi.fn(), findFirst: vi.fn() },
-    groupMember: { findMany: vi.fn(), count: vi.fn() },
+    groupMember: { findMany: vi.fn(), count: vi.fn(), update: vi.fn() },
+    contact: { update: vi.fn() },
+    contactAccess: { upsert: vi.fn() },
   },
+}));
+// to-contacts deps: dedup resolver + share helper + cổng quyền contact.create.
+const resolveOrCreateContactMock = vi.fn();
+const attachCollaboratorMock = vi.fn().mockResolvedValue(undefined);
+vi.mock('../src/modules/contacts/resolve-contact.js', () => ({
+  resolveOrCreateContact: (...a: any[]) => resolveOrCreateContactMock(...a),
+}));
+vi.mock('../src/modules/contacts/contact-scope.js', () => ({
+  attachContactCollaboratorByUser: (...a: any[]) => attachCollaboratorMock(...a),
+}));
+vi.mock('../src/modules/rbac/rbac-middleware.js', () => ({
+  requireGrant: () => async () => {},
 }));
 vi.mock('../src/shared/zalo-operations.js', () => ({
   zaloOps: zaloOpsMock,
@@ -213,5 +228,171 @@ describe('GET /api/v1/zalo-accounts/:accountId/group-scans/:scanId/members', () 
     (prisma as any).groupScan.findFirst.mockResolvedValueOnce(null);
     const res = await buildApp().inject({ method: 'GET', url: `${BASE}/missing/members` });
     expect(res.statusCode).toBe(404);
+  });
+});
+
+// ── POST to-contacts ────────────────────────────────────────────────────────────
+// Quét nhóm 2026-09-05: thành viên roster → Contact source='quet-nhom'. Đây là thứ làm
+// cho bộ lọc "Nguồn khách = Quét nhóm" có dữ liệu; trước đó group_members không bao giờ
+// thành khách nên lọc luôn rỗng.
+describe('POST /api/v1/zalo-accounts/:accountId/group-scans/:scanId/to-contacts', () => {
+  const M = (over: Partial<Record<string, unknown>> = {}) => ({
+    id: 'gm-1', memberUid: 'u1', globalId: 'g1',
+    displayName: 'Chị Lan', zaloName: 'lan', avatarUrl: null, ...over,
+  });
+
+  beforeEach(() => {
+    (prisma as any).groupScan.findFirst.mockResolvedValue({ groupIds: ['A'] });
+    (prisma as any).groupMember.update.mockResolvedValue({});
+    (prisma as any).contact.update.mockResolvedValue({});
+    (prisma as any).contactAccess.upsert.mockResolvedValue({});
+  });
+
+  it('returns 400 when neither memberUids nor all is given', async () => {
+    const res = await buildApp().inject({
+      method: 'POST', url: `${BASE}/scan-1/to-contacts`, payload: {},
+    });
+    expect(res.statusCode).toBe(400);
+    expect(resolveOrCreateContactMock).not.toHaveBeenCalled();
+  });
+
+  it('returns 404 when scan not found', async () => {
+    (prisma as any).groupScan.findFirst.mockResolvedValue(null);
+    const res = await buildApp().inject({
+      method: 'POST', url: `${BASE}/missing/to-contacts`, payload: { all: true },
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  // Khách MỚI: mang nguồn 'quet-nhom' + có ContactAccess primary. Thiếu ContactAccess
+  // thì màn Khách hàng của sale trắng trơn — khách vừa thêm coi như biến mất.
+  it('new contact gets source=quet-nhom, an owner, and a primary ContactAccess row', async () => {
+    (prisma as any).groupMember.findMany.mockResolvedValue([M()]);
+    (prisma as any).groupMember.count.mockResolvedValue(1);
+    resolveOrCreateContactMock.mockResolvedValue({ id: 'c-1', orgId: 'org-1', created: true });
+
+    const res = await buildApp().inject({
+      method: 'POST', url: `${BASE}/scan-1/to-contacts`, payload: { memberUids: ['u1'] },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body)).toMatchObject({ created: 1, linked: 0, failed: 0, remaining: 0 });
+
+    const upd = (prisma as any).contact.update.mock.calls[0][0];
+    expect(upd.where).toEqual({ id: 'c-1' });
+    expect(upd.data.source).toBe('quet-nhom');
+    expect(upd.data.assignedUserId).toBeTruthy();
+
+    expect((prisma as any).contactAccess.upsert).toHaveBeenCalledTimes(1);
+    expect((prisma as any).contactAccess.upsert.mock.calls[0][0].create.role).toBe('primary');
+    // Liên kết ngược để lần sau không tạo trùng.
+    expect((prisma as any).groupMember.update).toHaveBeenCalledWith({
+      where: { id: 'gm-1' }, data: { contactId: 'c-1' },
+    });
+  });
+
+  // Khách đã có sẵn (vd đến từ Facebook, tình cờ ở trong nhóm): KHÔNG đè nguồn, KHÔNG
+  // cướp primary — chỉ xin quyền xem chung.
+  it('existing contact keeps its source and owner; caller only gets collaborator', async () => {
+    (prisma as any).groupMember.findMany.mockResolvedValue([M()]);
+    (prisma as any).groupMember.count.mockResolvedValue(1);
+    resolveOrCreateContactMock.mockResolvedValue({ id: 'c-9', orgId: 'org-1', created: false });
+
+    const res = await buildApp().inject({
+      method: 'POST', url: `${BASE}/scan-1/to-contacts`, payload: { memberUids: ['u1'] },
+    });
+
+    expect(JSON.parse(res.body)).toMatchObject({ created: 0, linked: 1 });
+    expect((prisma as any).contact.update).not.toHaveBeenCalled();
+    expect((prisma as any).contactAccess.upsert).not.toHaveBeenCalled();
+    expect(attachCollaboratorMock).toHaveBeenCalledWith(
+      expect.objectContaining({ contactId: 'c-9', source: 'quet-nhom' }),
+    );
+  });
+
+  // Điều kiện contactId:null là thứ khiến vòng "thêm tất cả" tiến được qua từng lượt.
+  it('all=true skips already-imported members and honours the friend filter', async () => {
+    (prisma as any).groupMember.findMany.mockResolvedValue([]);
+    (prisma as any).groupMember.count.mockResolvedValue(0);
+
+    await buildApp().inject({
+      method: 'POST', url: `${BASE}/scan-1/to-contacts`,
+      payload: { all: true, isFriend: true },
+    });
+
+    const where = (prisma as any).groupMember.findMany.mock.calls[0][0].where;
+    expect(where).toMatchObject({
+      zaloAccountId: 'za-1', groupId: { in: ['A'] }, contactId: null, isFriend: true,
+    });
+    // all=true → không giới hạn theo danh sách uid.
+    expect(where.memberUid).toBeUndefined();
+  });
+
+  // isFriend=false phải là "CHỈ người lạ", không phải "bỏ lọc". Nếu nó rơi về tất cả thì
+  // sale đang lọc Người lạ bấm Thêm sẽ nhập nhầm cả bạn bè vào.
+  it('isFriend=false imports strangers only, not everyone', async () => {
+    (prisma as any).groupMember.findMany.mockResolvedValue([]);
+    (prisma as any).groupMember.count.mockResolvedValue(0);
+
+    await buildApp().inject({
+      method: 'POST', url: `${BASE}/scan-1/to-contacts`,
+      payload: { all: true, isFriend: false },
+    });
+
+    expect((prisma as any).groupMember.findMany.mock.calls[0][0].where.isFriend).toBe(false);
+  });
+
+  // Không truyền isFriend = roster "Tất cả" → không được kẹp điều kiện nào.
+  it('omitting isFriend leaves the friend filter off', async () => {
+    (prisma as any).groupMember.findMany.mockResolvedValue([]);
+    (prisma as any).groupMember.count.mockResolvedValue(0);
+
+    await buildApp().inject({
+      method: 'POST', url: `${BASE}/scan-1/to-contacts`, payload: { all: true },
+    });
+
+    expect((prisma as any).groupMember.findMany.mock.calls[0][0].where.isFriend).toBeUndefined();
+  });
+
+  // Nhóm lớn vượt trần một lượt → FE phải biết còn bao nhiêu để gọi tiếp.
+  it('reports remaining so the caller can keep going', async () => {
+    (prisma as any).groupMember.findMany.mockResolvedValue([M(), M({ id: 'gm-2', memberUid: 'u2' })]);
+    (prisma as any).groupMember.count.mockResolvedValue(500);
+    resolveOrCreateContactMock.mockResolvedValue({ id: 'c-1', orgId: 'org-1', created: true });
+
+    const res = await buildApp().inject({
+      method: 'POST', url: `${BASE}/scan-1/to-contacts`, payload: { all: true },
+    });
+    expect(JSON.parse(res.body)).toMatchObject({ created: 2, remaining: 498 });
+  });
+
+  // Một người hỏng không được chặn phần còn lại — nhóm nghìn người mà dừng ở người thứ
+  // hai thì sale phải bấm lại từ đầu.
+  it('keeps going when one member fails', async () => {
+    (prisma as any).groupMember.findMany.mockResolvedValue([
+      M(), M({ id: 'gm-2', memberUid: 'u2' }), M({ id: 'gm-3', memberUid: 'u3' }),
+    ]);
+    (prisma as any).groupMember.count.mockResolvedValue(3);
+    resolveOrCreateContactMock
+      .mockResolvedValueOnce({ id: 'c-1', orgId: 'org-1', created: true })
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockResolvedValueOnce({ id: 'c-3', orgId: 'org-1', created: true });
+
+    const res = await buildApp().inject({
+      method: 'POST', url: `${BASE}/scan-1/to-contacts`, payload: { all: true },
+    });
+    expect(JSON.parse(res.body)).toMatchObject({ created: 2, failed: 1 });
+  });
+
+  it('returns 403 when caller lacks access to the account', async () => {
+    checkAccessMock.mockImplementationOnce(async (_req: any, reply: any) => {
+      reply.status(403).send({ error: 'Không có quyền truy cập tài khoản Zalo này' });
+      return false;
+    });
+    const res = await buildApp().inject({
+      method: 'POST', url: `${BASE}/scan-1/to-contacts`, payload: { all: true },
+    });
+    expect(res.statusCode).toBe(403);
+    expect(resolveOrCreateContactMock).not.toHaveBeenCalled();
   });
 });

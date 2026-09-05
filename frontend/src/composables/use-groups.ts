@@ -30,7 +30,17 @@ export interface GroupScanMember {
   isAdmin: boolean;
   isFriend: boolean;
   harvestedAt: string;
+  /** Đã thêm thành Khách hàng nào chưa — null = chưa. */
+  contactId: string | null;
   [key: string]: any;
+}
+
+/** Kết quả một lượt "Thêm vào khách hàng". `remaining` > 0 nghĩa còn phải gọi tiếp. */
+export interface GroupScanImportResult {
+  created: number;
+  linked: number;
+  failed: number;
+  remaining: number;
 }
 
 export function useGroups() {
@@ -378,6 +388,28 @@ export function useGroups() {
     }
   }
 
+  /**
+   * Thêm thành viên đã quét vào Khách hàng (source='quet-nhom').
+   * Chọn tay → `memberUids`; cả roster theo bộ lọc → `all: true`. `isFriend` khớp
+   * đúng param của roster: bỏ trống = tất cả, true = là bạn, false = người lạ.
+   *
+   * Backend chặn trần mỗi lượt nên `remaining` có thể > 0 — caller phải gọi lại tới
+   * khi về 0. Mỗi lượt chỉ lấy thành viên chưa có contactId nên chắc chắn tiến.
+   */
+  async function scanMembersToContacts(
+    accountId: string,
+    scanId: string,
+    payload: { memberUids?: string[]; all?: boolean; isFriend?: boolean },
+  ): Promise<GroupScanImportResult | null> {
+    try {
+      const res = await api.post(`${scanBase(accountId)}/${scanId}/to-contacts`, payload);
+      return res.data ?? null;
+    } catch (err) {
+      console.error('Failed to import scan members to contacts:', err);
+      return null;
+    }
+  }
+
   return {
     groups, selectedGroup, members, blocked, pending,
     loading, actionLoading,
@@ -391,6 +423,6 @@ export function useGroups() {
     leaveGroup, disperseGroup,
     // Group scan (feature E1)
     scan, scanMembers, scanLoading, scanMembersLoading,
-    createScan, fetchScanStatus, fetchScanMembers,
+    createScan, fetchScanStatus, fetchScanMembers, scanMembersToContacts,
   };
 }

@@ -99,6 +99,37 @@ describe('custom-report SQL injection regression', () => {
     expect(sql).not.toContain('source =');
   });
 
+  // Nguồn gộp "khao-sat": khách khảo sát lưu source kèm tỉnh ("khao-sat:Hà Nội") nên
+  // so bằng ra báo cáo rỗng. Nhánh này thêm LIKE — tiền tố vẫn phải là tham số bound.
+  it('survey source matches both the bare value and the per-province prefix, still bound', async () => {
+    await executeCustomReport('org-1', {
+      metrics: ['contacts_new'],
+      groupBy: 'day',
+      dateRange: { from: '2024-01-01', to: '2024-12-31' },
+      filters: { source: 'khao-sat' },
+    });
+
+    const { sql, bound } = flatten(queryRawMock.mock.calls[0]);
+    expect(sql).toContain('source LIKE');
+    expect(bound).toContain('khao-sat');
+    expect(bound).toContain('khao-sat:%');
+    // Tiền tố đi bằng tham số, không nối chuỗi vào SQL.
+    expect(sql).not.toContain('khao-sat');
+  });
+
+  it('a single province stays an exact match (no prefix widening)', async () => {
+    await executeCustomReport('org-1', {
+      metrics: ['contacts_new'],
+      groupBy: 'day',
+      dateRange: { from: '2024-01-01', to: '2024-12-31' },
+      filters: { source: 'khao-sat:Hà Nội' },
+    });
+
+    const { sql, bound } = flatten(queryRawMock.mock.calls[0]);
+    expect(sql).not.toContain('LIKE');
+    expect(bound).toContain('khao-sat:Hà Nội');
+  });
+
   it('throws on invalid groupBy enum (no Prisma.raw escape)', async () => {
     await expect(
       executeCustomReport('org-1', {

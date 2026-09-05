@@ -216,6 +216,15 @@
             </div>
           </div>
           <v-spacer />
+          <v-btn
+            color="primary"
+            prepend-icon="mdi-account-plus"
+            :loading="importing"
+            :disabled="importing"
+            @click="importDialog = true"
+          >
+            Thêm vào khách hàng
+          </v-btn>
           <v-btn variant="text" prepend-icon="mdi-refresh" @click="backToPick">Quét lại</v-btn>
         </div>
 
@@ -273,11 +282,13 @@
         </v-alert>
 
         <v-data-table
+          v-model="selectedMemberIds"
           :headers="memberHeaders"
           :items="filteredMembers"
           :loading="scanMembersLoading"
           :search="memberSearch"
           item-value="id"
+          show-select
           density="comfortable"
           class="mt-2"
         >
@@ -309,12 +320,93 @@
             <v-chip v-if="item.isAdmin" size="small" color="primary" variant="tonal">Admin</v-chip>
             <span v-else class="text-medium-emphasis">—</span>
           </template>
+          <template #item.contactId="{ item }">
+            <v-chip v-if="item.contactId" size="small" color="primary" variant="tonal">
+              <v-icon start size="13">mdi-account-check</v-icon> Đã thêm
+            </v-chip>
+            <span v-else class="text-medium-emphasis">—</span>
+          </template>
           <template #item.harvestedAt="{ item }">
             <span class="text-medium-emphasis">{{ formatTime(item.harvestedAt) }}</span>
           </template>
         </v-data-table>
       </v-card>
     </div>
+
+    <!-- ════════ Thêm vào khách hàng ════════ -->
+    <v-dialog v-model="importDialog" max-width="520" :persistent="importing">
+      <v-card>
+        <v-card-title class="d-flex align-center gap-2">
+          <v-icon color="primary">mdi-account-plus</v-icon> Thêm vào khách hàng
+        </v-card-title>
+        <v-card-text>
+          <v-radio-group v-model="importScope" :disabled="importing" hide-details class="mb-3">
+            <v-radio :disabled="!selectedMemberIds.length" value="selected">
+              <template #label>
+                Chỉ {{ selectedMemberIds.length }} người đang tick
+                <span v-if="!selectedMemberIds.length" class="text-medium-emphasis ml-1">
+                  (chưa tick ai)
+                </span>
+              </template>
+            </v-radio>
+            <v-radio value="all">
+              <template #label>
+                Tất cả thành viên đã quét{{ friendFilter === 'friend' ? ' — chỉ người là bạn' : friendFilter === 'stranger' ? ' — chỉ người lạ' : '' }}
+              </template>
+            </v-radio>
+          </v-radio-group>
+
+          <v-alert
+            v-if="importScope === 'all'"
+            type="info"
+            variant="tonal"
+            density="compact"
+            icon="mdi-information"
+          >
+            Chạy theo từng đợt, có thể mất vài phút với nhóm lớn. Người đã thêm rồi sẽ
+            được bỏ qua, bấm lại không tạo khách trùng.
+          </v-alert>
+          <v-alert
+            v-if="importScope === 'all' && friendFilter === 'stranger'"
+            type="warning"
+            variant="tonal"
+            density="compact"
+            class="mt-2"
+            icon="mdi-alert"
+          >
+            Bộ lọc đang là <b>Người lạ</b> — sẽ thêm toàn người chưa kết bạn. Nhắn hàng
+            loạt nhóm này dễ bay nick.
+          </v-alert>
+
+          <div class="text-caption text-medium-emphasis mt-3">
+            Khách mới tạo mang nguồn <b>Quét nhóm</b> và về tay bạn. Ai đã là khách sẵn
+            thì giữ nguyên chủ và nguồn cũ, bạn chỉ được thêm quyền xem chung.
+          </div>
+
+          <div v-if="importing" class="mt-4">
+            <v-progress-linear indeterminate color="primary" height="6" rounded />
+            <div class="text-caption text-medium-emphasis mt-2">
+              Đã thêm {{ importProgress.created }} khách mới ·
+              {{ importProgress.linked }} đã có sẵn
+              <span v-if="importProgress.remaining"> · còn ~{{ importProgress.remaining }}</span>
+            </div>
+          </div>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" :disabled="importing" @click="importDialog = false">Huỷ</v-btn>
+          <v-btn
+            color="primary"
+            variant="flat"
+            :loading="importing"
+            :disabled="importScope === 'selected' && !selectedMemberIds.length"
+            @click="runImport"
+          >
+            Thêm
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
 
     <!-- snackbar -->
     <v-snackbar v-model="snack.show" :color="snack.color" timeout="3000" location="bottom end">
@@ -324,7 +416,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue';
+import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from 'vue';
 import { useSelectedAccount } from '@/composables/use-selected-account';
 import { useGroups, type GroupScanMember } from '@/composables/use-groups';
 
@@ -339,7 +431,7 @@ function acctOnline(item: any): boolean {
 const {
   groups, loading,
   scan, scanMembers, scanLoading, scanMembersLoading,
-  fetchGroups, createScan, fetchScanStatus, fetchScanMembers,
+  fetchGroups, createScan, fetchScanStatus, fetchScanMembers, scanMembersToContacts,
 } = useGroups();
 
 type Phase = 'pick' | 'scanning' | 'roster';
@@ -470,8 +562,83 @@ const memberHeaders = [
   { title: 'Zalo UID', key: 'memberUid' },
   { title: 'Trạng thái', key: 'isFriend' },
   { title: 'Vai trò', key: 'isAdmin' },
+  { title: 'Khách hàng', key: 'contactId' },
   { title: 'Lưu lúc', key: 'harvestedAt', align: 'end' as const },
 ];
+
+/* ── Thêm vào khách hàng (source='quet-nhom') ── */
+const selectedMemberIds = ref<string[]>([]);
+const importDialog = ref(false);
+const importing = ref(false);
+const importScope = ref<'selected' | 'all'>('all');
+const importProgress = reactive({ created: 0, linked: 0, failed: 0, remaining: 0 });
+
+// Mở hộp thoại thì đoán ý: có tick sẵn → mặc định "chỉ người đang tick".
+watch(importDialog, (open) => {
+  if (open && !importing.value) {
+    importScope.value = selectedMemberIds.value.length ? 'selected' : 'all';
+    Object.assign(importProgress, { created: 0, linked: 0, failed: 0, remaining: 0 });
+  }
+});
+
+async function runImport() {
+  const acct = selectedAccountId.value;
+  const scanId = scan.value?.id;
+  if (!acct || !scanId) return;
+
+  importing.value = true;
+  Object.assign(importProgress, { created: 0, linked: 0, failed: 0, remaining: 0 });
+
+  try {
+    if (importScope.value === 'selected') {
+      const uids = scanMembers.value
+        .filter((m) => selectedMemberIds.value.includes(m.id))
+        .map((m) => m.memberUid);
+      const res = await scanMembersToContacts(acct, scanId, { memberUids: uids });
+      if (!res) {
+        notify('Không thêm được vào khách hàng', 'error');
+        return;
+      }
+      Object.assign(importProgress, res);
+    } else {
+      // Backend chặn trần mỗi lượt → lặp tới khi remaining = 0. Mỗi lượt chỉ lấy
+      // người chưa có contactId nên vòng lặp chắc chắn tiến; thêm trần vòng lặp
+      // phòng backend trả remaining kẹt, để không quay vô hạn trong trình duyệt.
+      let guard = 200;
+      for (;;) {
+        const res = await scanMembersToContacts(acct, scanId, {
+          all: true,
+          // Nhập ĐÚNG tập sale đang nhìn: đang lọc "Là bạn" thì chỉ bạn bè, đang lọc
+          // "Người lạ" thì chỉ người lạ, "Tất cả" thì bỏ trống.
+          ...(friendFilter.value === 'all' ? {} : { isFriend: friendFilter.value === 'friend' }),
+        });
+        if (!res) {
+          notify('Không thêm được vào khách hàng', 'error');
+          return;
+        }
+        importProgress.created += res.created;
+        importProgress.linked += res.linked;
+        importProgress.failed += res.failed;
+        importProgress.remaining = res.remaining;
+        // Hết người, hoặc một lượt không xử lý nổi ai (toàn lỗi) → dừng, tránh kẹt.
+        if (res.remaining <= 0 || res.created + res.linked === 0) break;
+        if (--guard <= 0) break;
+      }
+    }
+
+    const { created, linked, failed } = importProgress;
+    const parts = [`${created} khách mới`];
+    if (linked) parts.push(`${linked} đã có sẵn`);
+    if (failed) parts.push(`${failed} lỗi`);
+    notify(`Đã thêm: ${parts.join(' · ')}`, failed ? 'warning' : 'success');
+
+    importDialog.value = false;
+    selectedMemberIds.value = [];
+    await loadMembers(); // refresh để chip "Đã thêm" hiện đúng
+  } finally {
+    importing.value = false;
+  }
+}
 
 // Client-side fallback filter (backend already filters via isFriend param, but
 // keeps the segment instant when toggling before the refetch resolves).

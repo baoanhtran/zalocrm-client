@@ -131,6 +131,10 @@
         <select v-model="filters.source" @change="fetchContacts">
           <option value="">Tất cả nguồn</option>
           <option v-for="o in SOURCE_OPTIONS" :key="o.value" :value="o.value">{{ o.text }}</option>
+          <!-- Tách theo tỉnh: mỗi phiếu khảo sát lưu kèm tỉnh nên lọc được tới từng nơi -->
+          <optgroup v-if="surveyProvinceOptions.length" label="Khảo sát theo tỉnh">
+            <option v-for="o in surveyProvinceOptions" :key="o.value" :value="o.value">{{ o.text }}</option>
+          </optgroup>
         </select>
       </div>
       <div class="adv-group">
@@ -679,6 +683,7 @@ import { api } from '@/api';
 import {
   useContacts, useContactIntelligence,
   SOURCE_OPTIONS, STATUS_OPTIONS, GENDER_OPTIONS,
+  SOURCE_SURVEY_PREFIX, sourceLabel,
   formatRecentDateTime, cleanPreview,
 } from '@/composables/use-contacts';
 import type { Contact } from '@/composables/use-contacts';
@@ -1203,8 +1208,27 @@ async function applyFriendStatus(statusId: string) {
 function genderLabel(value: string) {
   return GENDER_OPTIONS.find(o => o.value === value)?.text ?? value;
 }
-function sourceLabel(value: string) {
-  return SOURCE_OPTIONS.find(o => o.value === value)?.text ?? value;
+/**
+ * Tỉnh của khách khảo sát, lấy động từ GET /contacts/sources (endpoint sẵn có, trả
+ * distinct source + count). Chỉ giữ dòng "khao-sat:*" — phần còn lại là nguồn cũ/kỹ
+ * thuật (quick_add, virtual_chat_open...), không phải thứ sale cần lọc.
+ *
+ * Chạy một lần lúc mở trang: danh mục tỉnh đổi theo nhịp phiếu về, không cần realtime.
+ */
+const surveyProvinceOptions = ref<Array<{ text: string; value: string }>>([]);
+async function loadSurveyProvinces() {
+  try {
+    const res = await api.get('/contacts/sources');
+    const rows: Array<{ source: string; count: number }> = res.data?.sources ?? [];
+    surveyProvinceOptions.value = rows
+      .filter(r => r.source?.startsWith(SOURCE_SURVEY_PREFIX))
+      .map(r => ({
+        text: `${sourceLabel(r.source)} (${r.count})`,
+        value: r.source,
+      }));
+  } catch {
+    // Không có tỉnh nào thì dropdown vẫn còn nguồn gộp "Phiếu khảo sát" — vẫn lọc được.
+  }
 }
 function statusLabel(value: string) {
   return STATUS_OPTIONS.find(o => o.value === value)?.text ?? value;
@@ -1516,6 +1540,7 @@ onMounted(() => {
   loadStats();
   loadMasterStatuses();
   loadUsers();
+  loadSurveyProvinces();
 });
 
 // M55.2 2026-05-30 — Handle /contacts?focus={id} từ AddCustomerQuickDialog

@@ -28,6 +28,8 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type { TagScope, TagSource } from '@prisma/client';
 import { prisma, tenantTransaction } from '../../shared/database/prisma-client.js';
 import { authMiddleware } from '../auth/auth-middleware.js';
+import { requireGrant, requireAnyGrant } from '../rbac/rbac-middleware.js';
+import { userHasGrant } from '../rbac/permission-group-service.js';
 import { getZaloScope } from '../zalo/zalo-scope.js';
 import { logger } from '../../shared/utils/logger.js';
 import {
@@ -48,6 +50,54 @@ const SOURCE_VALUES = new Set<TagSource>([
   'manual_crm', 'ai_suggest', 'segment_rule', 'status', 'import',
 ]);
 
+/**
+ * Chốt chặn cửa sau tạo nhãn.
+ *
+ * `autoCreate: true` nghĩa là "chưa có thì đẻ ra" — đó chính là cách sale tạo nhãn mới
+ * ngay trong màn chat, đi vòng qua trang quản lý. Không chặn ở đây thì quyền tag.create
+ * chỉ khoá được cửa trước, còn danh mục vẫn đầy nhãn trùng nghĩa và gõ sai chính tả.
+ *
+ * NHƯNG không chặn thẳng theo cờ autoCreate: findOrCreateTag() chỉ TẠO khi nhãn chưa
+ * tồn tại, còn tên đã có sẵn thì nó chỉ tìm ra. Chặn theo cờ là chặn nhầm cả người đang
+ * gắn một nhãn có sẵn — đúng việc mà quyết định thiết kế muốn để cho sale làm tự do.
+ * Nên phải tra xem nhãn đã tồn tại chưa rồi mới quyết.
+ *
+ * Tra bằng (orgId, scope, slug) và CỐ Ý bỏ qua zaloAccountId, lỏng hơn điều kiện của
+ * findOrCreateTag một chút: chấp nhận lọt vài trường hợp tạo biến thể theo nick, đổi lấy
+ * việc không bao giờ chặn nhầm người đang làm đúng.
+ *
+ * @returns true nếu ĐÃ trả lời 403 — caller phải dừng ngay.
+ */
+async function chanTaoNhanMoi_(
+  req: FastifyRequest,
+  reply: FastifyReply,
+  scope: TagScope,
+  body: { tagId?: string; tagSlug?: string; tagName?: string; autoCreate?: boolean },
+): Promise<boolean> {
+  if (!body.autoCreate || !body.tagName || body.tagId || body.tagSlug) return false;
+  const user = req.user!;
+  const userId = (user as any).userId ?? user.id;
+  if (await userHasGrant(userId, 'tag', 'create').catch(() => false)) return false;
+
+  const { slugifyTag } = await import('../../shared/tag-slug.js');
+  const slug = slugifyTag(body.tagName);
+  const daCo = slug
+    ? await prisma.tag.findFirst({
+        where: { orgId: user.orgId, scope, slug },
+        select: { id: true },
+      })
+    : null;
+  if (daCo) return false; // chỉ là gắn nhãn có sẵn, không phải tạo mới
+
+  reply.code(403).send({
+    error: 'Bạn không có quyền tạo nhãn mới. Nhờ quản trị thêm nhãn này vào danh mục rồi chọn lại.',
+    code: 'RBAC_FORBIDDEN',
+    resource: 'tag',
+    action: 'create',
+  });
+  return true;
+}
+
 export async function registerTagRoutes(app: FastifyInstance): Promise<void> {
   app.addHook('preHandler', authMiddleware);
 
@@ -55,7 +105,10 @@ export async function registerTagRoutes(app: FastifyInstance): Promise<void> {
   // Tag definitions
   // ─────────────────────────────────────────────────────────────────────
 
-  app.get('/', async (req: FastifyRequest<{ Querystring: { scope?: string; source?: string; q?: string; cursor?: string; limit?: string; recount?: string; zaloAccountId?: string } }>, reply: FastifyReply) => {
+  // ĐỌC danh mục nhãn không chỉ phục vụ trang quản lý — ô chọn nhãn trong chat và màn
+  // khách hàng cũng gọi đúng endpoint này. Nên ai làm việc với khách cũng phải đọc được,
+  // kể cả nhóm không có tag.access. Thiếu vế contact.access là sale mất ô chọn nhãn.
+  app.get<{ Querystring: { scope?: string; source?: string; q?: string; cursor?: string; limit?: string; recount?: string; zaloAccountId?: string } }>('/', { preHandler: requireAnyGrant(['tag', 'access'], ['contact', 'access']) }, async (req: FastifyRequest<{ Querystring: { scope?: string; source?: string; q?: string; cursor?: string; limit?: string; recount?: string; zaloAccountId?: string } }>, reply: FastifyReply) => {
     const user = req.user!;
     const scope = (req.query.scope ?? 'friend') as TagScope;
     if (scope !== 'friend' && scope !== 'crm') {
@@ -118,7 +171,7 @@ export async function registerTagRoutes(app: FastifyInstance): Promise<void> {
   // GET /tags/zalo-accounts — list nick zalo cho filter dropdown (Friend tab).
   // 2026-06-10 FIX: thêm getZaloScope (chỉ nick user được phép) + ẩn nick đã xóa mềm.
   // Bug cũ: chỉ lọc orgId → sale thường thấy nick ngoài quyền + nick đã archived.
-  app.get('/zalo-accounts', async (req: FastifyRequest, reply: FastifyReply) => {
+  app.get<{ Body: { name: string; scope: TagScope; source: TagSource; color?: string; emoji?: string; groupId?: string } }>('/zalo-accounts', { preHandler: requireAnyGrant(['tag', 'access'], ['contact', 'access']) }, async (req: FastifyRequest, reply: FastifyReply) => {
     const user = req.user!;
     const scope = await getZaloScope(user.id, user.orgId, user.role);
     const accounts = await prisma.zaloAccount.findMany({
@@ -133,7 +186,7 @@ export async function registerTagRoutes(app: FastifyInstance): Promise<void> {
     return reply.send({ accounts });
   });
 
-  app.post('/', async (req: FastifyRequest<{ Body: { name: string; scope: TagScope; source: TagSource; color?: string; emoji?: string; groupId?: string } }>, reply: FastifyReply) => {
+  app.post<{ Body: { name: string; scope: TagScope; source: TagSource; color?: string; emoji?: string; groupId?: string } }>('/', { preHandler: requireGrant('tag', 'create') }, async (req: FastifyRequest<{ Body: { name: string; scope: TagScope; source: TagSource; color?: string; emoji?: string; groupId?: string } }>, reply: FastifyReply) => {
     const user = req.user!;
     const { name, scope, source, color, emoji, groupId } = req.body;
     if (!name || !scope || !source) return reply.code(400).send({ error: 'MISSING_FIELDS' });
@@ -154,7 +207,7 @@ export async function registerTagRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
-  app.patch('/:id', async (req: FastifyRequest<{ Params: { id: string }; Body: { name?: string; color?: string; emoji?: string; groupId?: string | null; priority?: number } }>, reply: FastifyReply) => {
+  app.patch<{ Params: { id: string }; Body: { name?: string; color?: string; emoji?: string; groupId?: string | null; priority?: number } }>('/:id', { preHandler: requireGrant('tag', 'edit') }, async (req: FastifyRequest<{ Params: { id: string }; Body: { name?: string; color?: string; emoji?: string; groupId?: string | null; priority?: number } }>, reply: FastifyReply) => {
     const user = req.user!;
     const tag = await prisma.tag.findUnique({ where: { id: req.params.id } });
     if (!tag || tag.orgId !== user.orgId) return reply.code(404).send({ error: 'TAG_NOT_FOUND' });
@@ -215,7 +268,7 @@ export async function registerTagRoutes(app: FastifyInstance): Promise<void> {
     return reply.send({ tag: updated, pushedZalo: wantsPushZalo });
   });
 
-  app.delete('/:id', async (req: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
+  app.delete<{ Params: { id: string } }>('/:id', { preHandler: requireGrant('tag', 'delete') }, async (req: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
     const user = req.user!;
     const tag = await prisma.tag.findUnique({ where: { id: req.params.id } });
     if (!tag || tag.orgId !== user.orgId) return reply.code(404).send({ error: 'TAG_NOT_FOUND' });
@@ -223,7 +276,8 @@ export async function registerTagRoutes(app: FastifyInstance): Promise<void> {
     return reply.send({ ok: true });
   });
 
-  app.post('/merge', async (req: FastifyRequest<{ Body: { sourceTagId: string; targetTagId: string } }>, reply: FastifyReply) => {
+  // Gộp làm biến mất nhãn nguồn nên xếp cùng bậc với xoá, không phải sửa.
+  app.post<{ Body: { sourceTagId: string; targetTagId: string } }>('/merge', { preHandler: requireGrant('tag', 'delete') }, async (req: FastifyRequest<{ Body: { sourceTagId: string; targetTagId: string } }>, reply: FastifyReply) => {
     const user = req.user!;
     try {
       const result = await mergeTags({
@@ -253,6 +307,7 @@ export async function registerFriendTagRoutes(app: FastifyInstance): Promise<voi
 
   app.post('/:id/tags', async (req: FastifyRequest<{ Params: { id: string }; Body: { tagId?: string; tagSlug?: string; tagName?: string; source: TagSource; autoCreate?: boolean; color?: string } }>, reply: FastifyReply) => {
     const user = req.user!;
+    if (await chanTaoNhanMoi_(req, reply, 'friend', req.body)) return reply;
     try {
       const result = await addFriendTag({
         friendId: req.params.id,
@@ -298,6 +353,7 @@ export async function registerContactCrmTagRoutes(app: FastifyInstance): Promise
 
   app.post('/:id/crm-tags', async (req: FastifyRequest<{ Params: { id: string }; Body: { tagId?: string; tagSlug?: string; tagName?: string; source: TagSource; autoCreate?: boolean; color?: string } }>, reply: FastifyReply) => {
     const user = req.user!;
+    if (await chanTaoNhanMoi_(req, reply, 'crm', req.body)) return reply;
     try {
       const result = await addCrmTag({
         contactId: req.params.id,

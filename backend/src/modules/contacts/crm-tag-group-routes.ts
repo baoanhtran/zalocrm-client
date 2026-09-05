@@ -10,13 +10,14 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { prisma } from '../../shared/database/prisma-client.js';
 import { authMiddleware } from '../auth/auth-middleware.js';
+import { requireGrant, requireAnyGrant } from '../rbac/rbac-middleware.js';
 import { logger } from '../../shared/utils/logger.js';
 
 export async function crmTagGroupRoutes(app: FastifyInstance): Promise<void> {
   app.addHook('preHandler', authMiddleware);
 
   // ── GET /api/v1/crm-tag-groups — list all groups (kèm tag counts) ───────
-  app.get('/api/v1/crm-tag-groups', async (request: FastifyRequest, reply: FastifyReply) => {
+  app.get('/api/v1/crm-tag-groups', { preHandler: requireAnyGrant(['tag', 'access'], ['contact', 'access']) }, async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const user = request.user!;
       const groups = await prisma.crmTagGroup.findMany({
@@ -35,7 +36,7 @@ export async function crmTagGroupRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // ── POST /api/v1/crm-tag-groups — user-defined group ────────────────────
-  app.post('/api/v1/crm-tag-groups', async (request: FastifyRequest<{ Body: { name: string; order?: number } }>, reply: FastifyReply) => {
+  app.post<{ Body: { name: string; order?: number } }>('/api/v1/crm-tag-groups', { preHandler: requireGrant('tag', 'create') }, async (request: FastifyRequest<{ Body: { name: string; order?: number } }>, reply: FastifyReply) => {
     try {
       const user = request.user!;
       const name = (request.body?.name || '').trim();
@@ -62,7 +63,10 @@ export async function crmTagGroupRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // ── PATCH /api/v1/crm-tag-groups/:id — rename / reorder. Block zalo_sync. ─
-  app.patch('/api/v1/crm-tag-groups/:id', async (request: FastifyRequest<{
+  app.patch<{
+    Params: { id: string };
+    Body: { name?: string; order?: number };
+  }>('/api/v1/crm-tag-groups/:id', { preHandler: requireGrant('tag', 'edit') }, async (request: FastifyRequest<{
     Params: { id: string };
     Body: { name?: string; order?: number };
   }>, reply: FastifyReply) => {
@@ -89,7 +93,7 @@ export async function crmTagGroupRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // ── DELETE /api/v1/crm-tag-groups/:id — block zalo_sync ─────────────────
-  app.delete('/api/v1/crm-tag-groups/:id', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
+  app.delete<{ Params: { id: string } }>('/api/v1/crm-tag-groups/:id', { preHandler: requireGrant('tag', 'delete') }, async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
     try {
       const user = request.user!;
       const group = await prisma.crmTagGroup.findFirst({

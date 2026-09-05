@@ -144,7 +144,7 @@ const routes: RouteRecordRaw[] = [
       { path: 'crm/tags',        name: 'Settings.Tags',        component: () => import('@/components/settings/CrmTagManagement.vue'), meta: { resource: 'settings' } },
       // Tag Taxonomy v2 — M57 /plan-eng-review 2026-05-31 (Wave 4a dual-write window).
       // Khi Wave 5 ship, route /crm/tags này sẽ thành alias của tags-v2.
-      { path: 'crm/tags-v2',     name: 'Settings.TagsV2',      component: () => import('@/views/settings/TagTaxonomyV2Page.vue'), meta: { resource: 'settings' } },
+      { path: 'crm/tags-v2',     name: 'Settings.TagsV2',      component: () => import('@/views/settings/TagTaxonomyV2Page.vue'), meta: { resource: 'tag' } },
       { path: 'crm/zalo-labels', name: 'Settings.ZaloLabels',  component: () => import('@/components/settings/ZaloLabelsManagement.vue'), meta: { resource: 'settings' } },
       { path: 'crm/scoring',     name: 'Settings.Scoring',     component: () => import('@/views/ScoringSettingsView.vue'), meta: { resource: 'settings' } },
       // Lịch hẹn → nhắc hẹn Zalo (2026-06-16) — bật/tắt + delay phút gửi link đánh dấu.

@@ -95,7 +95,7 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
     permission: 'admin',
     items: [
       { id: 'statuses', label: 'Trạng thái KH', icon: 'mdi-flag-outline', route: '/settings/crm/statuses', permission: 'admin', resource: 'settings', aliases: ['stage', 'pipeline', 'trạng thái'] },
-      { id: 'tags-v2', label: 'Nhãn KH', icon: 'mdi-tag-multiple-outline', route: '/settings/crm/tags-v2', permission: 'admin', resource: 'settings', aliases: ['tag', 'tag mới', 'tag taxonomy', 'friend tag', 'crm tag', 'nhãn'] },
+      { id: 'tags-v2', label: 'Nhãn KH', icon: 'mdi-tag-multiple-outline', route: '/settings/crm/tags-v2', permission: 'admin', resource: 'tag', aliases: ['tag', 'tag mới', 'tag taxonomy', 'friend tag', 'crm tag', 'nhãn'] },
       { id: 'zalo-labels', label: 'Tag Zalo native', icon: 'mdi-label-outline', route: '/settings/crm/zalo-labels', permission: 'admin', resource: 'settings', aliases: ['zalo label', 'nhãn zalo'] },
       { id: 'scoring', label: 'Lead scoring', icon: 'mdi-chart-line', route: '/settings/crm/scoring', permission: 'admin', resource: 'settings', aliases: ['điểm', 'chấm điểm', 'score'] },
       { id: 'appointments', label: 'Lịch hẹn & Nhắc hẹn', icon: 'mdi-calendar-clock-outline', route: '/settings/crm/appointments', permission: 'admin', resource: 'settings', aliases: ['lịch hẹn', 'appointment', 'nhắc hẹn', 'reminder', 'zalo reminder', 'nhắc lịch'] },

@@ -355,6 +355,7 @@ const RESOURCE_LABELS: Record<string, { icon: string; label: string }> = {
   audit_log: { icon: '📜', label: 'Audit Log' },
   settings: { icon: '⚙', label: 'Cài đặt' },
   lead_distribution: { icon: '🔀', label: 'Chia lead tự động' },
+  tag: { icon: '🏷', label: 'Nhãn khách hàng' },
   // care_session và media đã có trong RESOURCES từ lâu nhưng thiếu ở đây, nên ma trận
   // hiện slug thô cho hai dòng đó. Bổ sung cùng lúc: resourceLabel() lùi về tên kỹ thuật
   // khi thiếu nhãn, tức là quên thêm ở đây không gây lỗi nào — chỉ lặng lẽ xấu.

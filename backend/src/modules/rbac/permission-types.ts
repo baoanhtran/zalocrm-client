@@ -36,6 +36,10 @@ export const RESOURCES = [
   'friend',             // Bạn bè (Zalo)       → /friends
   'conversation',       // Tin nhắn / Hội thoại→ /chat
   'customer_list',      // Tệp khách hàng      → /marketing/lists
+  // Chỉ là DANH MỤC nhãn (tạo/sửa/xoá/gộp ở trang Nhãn KH). Việc gắn một nhãn CÓ SẴN
+  // lên khách vẫn thuộc contact.edit/friend.edit — đó là sửa khách, không phải sửa danh
+  // mục. Gộp hai thứ thì hoặc sale hết gắn được nhãn, hoặc sale xoá được nhãn cả công ty.
+  'tag',                // Nhãn khách hàng     → /settings/crm/tags-v2
   // ── Marketing / Tự động hoá (menu Marketing) ──
   'trigger',            // Mục tiêu / Trigger  → /marketing/triggers
   'sequence',           // Sequence            → /marketing/sequences
@@ -75,6 +79,9 @@ export const RESOURCE_ACTIONS: Record<Resource, readonly Action[]> = {
   // sửa cấu hình rồi bật công tắc thì sáng mai cũng ra kết quả y hệt, tách ra chỉ làm ma
   // trận rối thêm mà không chặn thêm được gì.
   lead_distribution: ['access', 'edit'],
+  // Không có view_all: danh mục nhãn là của cả tổ chức, không có phạm vi phòng ban.
+  // 'access' = đọc được danh sách nhãn (cần cho ô chọn nhãn, không riêng trang quản lý).
+  tag: ['access', 'create', 'edit', 'delete'],
   // Phiên chăm sóc — access=xem phiên mình, view_all=xem cả org (scope theo dept tree).
   care_session: ['access', 'view_all'],
   // Kho phương tiện — access=xem/dùng kho, create=tải lên/lưu, edit=sửa quyền/tag/watermark,
@@ -177,6 +184,8 @@ export const DEFAULT_PERMISSION_GROUPS = [
       settings: { access: true },
       // Xem được ai đang nhận lead, nhưng không đổi được luật chia — giống mọi mục Cài đặt khác.
       lead_distribution: { access: true },
+      // Chỉ xem danh mục nhãn, không sửa — cùng tinh thần với các mục Cài đặt khác của CEO.
+      tag: { access: true },
       media: viewAll('media'), // xem cả kho org
     } as GrantsJson,
   },
@@ -202,6 +211,9 @@ export const DEFAULT_PERMISSION_GROUPS = [
       // Chỉ xem: trưởng phòng quản một chi nhánh, còn trang này là cấu hình toàn tổ chức —
       // đổi hạn mức chung hay tắt công tắc là ảnh hưởng mọi chi nhánh, không riêng của họ.
       lead_distribution: { access: true },
+      // Tạo và sửa được nhãn cho đội, nhưng KHÔNG xoá: nhãn là của cả tổ chức, xoá một
+      // nhãn là gỡ nó khỏi khách của mọi phòng ban khác chứ không riêng phòng mình.
+      tag: { access: true, create: true, edit: true },
       media: { access: true, create: true, edit: true, delete: true, view_all: true }, // full trong scope dept
     } as GrantsJson,
   },
@@ -221,6 +233,9 @@ export const DEFAULT_PERMISSION_GROUPS = [
       zalo_account: { access: true },
       engagement_score: { access: true },
       audit_log: { access: true },
+      // Tạo được nhãn mới khi cần (kể cả gõ tại chỗ lúc chat), nhưng không sửa/xoá nhãn
+      // người khác đã đặt.
+      tag: { access: true, create: true },
       media: { access: true, create: true, edit: true }, // kho của mình (scope owner)
     } as GrantsJson,
   },
@@ -241,6 +256,9 @@ export const DEFAULT_PERMISSION_GROUPS = [
       // Ownership check ở requireAccountManagement đảm bảo chỉ đụng nick mình owner.
       zalo_account: { access: true, create: true, delete: true },
       engagement_score: { access: true },
+      // KHÔNG có quyền tag nào: 'access' nghĩa là mở được trang quản lý Nhãn KH, mà sale
+      // không cần vào đó. Họ vẫn ĐỌC được danh mục để chọn nhãn — cổng GET /tags nhận cả
+      // contact.access. Chỉ mất khả năng gõ ra một nhãn MỚI ngay trong màn chat.
       media: { access: true, create: true, edit: true }, // kho của mình (scope owner) — sale dùng nhiều nhất
     } as GrantsJson,
   },
@@ -258,6 +276,8 @@ export const DEFAULT_PERMISSION_GROUPS = [
       block: { access: true, create: true, edit: true, delete: true, view_all: true },
       engagement_score: viewAll('engagement_score'),
       audit_log: { access: true },
+      // Toàn quyền danh mục nhãn: phân tệp là việc chính của Marketing, nhãn là công cụ.
+      tag: fullCrud('tag'),
       media: { access: true, create: true, edit: true, delete: true, view_all: true }, // tài sản marketing dùng chung
     } as GrantsJson,
   },

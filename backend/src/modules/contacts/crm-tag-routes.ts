@@ -13,6 +13,7 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { prisma } from '../../shared/database/prisma-client.js';
 import { authMiddleware } from '../auth/auth-middleware.js';
+import { requireGrant, requireAnyGrant } from '../rbac/rbac-middleware.js';
 import { logger } from '../../shared/utils/logger.js';
 
 /* ── Read-only enforcement cho Zalo-managed tags ──────────────────────────
@@ -37,7 +38,7 @@ export async function crmTagRoutes(app: FastifyInstance): Promise<void> {
 
   // ── GET /api/v1/crm-tags — list tất cả tags của org ─────────────────────
   // ?recount=1 → recompute usageCount từ Contact.tags JSON (chậm hơn, dùng khi cần fresh).
-  app.get('/api/v1/crm-tags', async (request: FastifyRequest<{ Querystring: { recount?: string } }>, reply: FastifyReply) => {
+  app.get<{ Querystring: { recount?: string } }>('/api/v1/crm-tags', { preHandler: requireAnyGrant(['tag', 'access'], ['contact', 'access']) }, async (request: FastifyRequest<{ Querystring: { recount?: string } }>, reply: FastifyReply) => {
     try {
       const user = request.user!;
 
@@ -90,7 +91,9 @@ export async function crmTagRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // ── POST /api/v1/crm-tags — create ──────────────────────────────────────
-  app.post('/api/v1/crm-tags', async (request: FastifyRequest<{
+  app.post<{
+    Body: { name: string; color?: string; emoji?: string; description?: string; category?: string; groupId?: string };
+  }>('/api/v1/crm-tags', { preHandler: requireGrant('tag', 'create') }, async (request: FastifyRequest<{
     Body: { name: string; color?: string; emoji?: string; description?: string; category?: string; groupId?: string };
   }>, reply: FastifyReply) => {
     try {
@@ -144,7 +147,10 @@ export async function crmTagRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // ── PATCH /api/v1/crm-tags/:id ──────────────────────────────────────────
-  app.patch('/api/v1/crm-tags/:id', async (request: FastifyRequest<{
+  app.patch<{
+    Params: { id: string };
+    Body: { name?: string; color?: string; emoji?: string | null; description?: string | null; category?: string | null; order?: number; isActive?: boolean };
+  }>('/api/v1/crm-tags/:id', { preHandler: requireGrant('tag', 'edit') }, async (request: FastifyRequest<{
     Params: { id: string };
     Body: { name?: string; color?: string; emoji?: string | null; description?: string | null; category?: string | null; order?: number; isActive?: boolean };
   }>, reply: FastifyReply) => {
@@ -209,7 +215,10 @@ export async function crmTagRoutes(app: FastifyInstance): Promise<void> {
 
   // ── DELETE /api/v1/crm-tags/:id ─────────────────────────────────────────
   // Body { removeFromContacts?: boolean } — true thì strip khỏi Contact.tags trên toàn org.
-  app.delete('/api/v1/crm-tags/:id', async (request: FastifyRequest<{
+  app.delete<{
+    Params: { id: string };
+    Body?: { removeFromContacts?: boolean };
+  }>('/api/v1/crm-tags/:id', { preHandler: requireGrant('tag', 'delete') }, async (request: FastifyRequest<{
     Params: { id: string };
     Body?: { removeFromContacts?: boolean };
   }>, reply: FastifyReply) => {
@@ -247,7 +256,7 @@ export async function crmTagRoutes(app: FastifyInstance): Promise<void> {
 
   // ── POST /api/v1/crm-tags/reorder — bulk reorder ────────────────────────
   // Body: { ids: string[] } — thứ tự mới, index trong array = order value.
-  app.post('/api/v1/crm-tags/reorder', async (request: FastifyRequest<{ Body: { ids: string[] } }>, reply: FastifyReply) => {
+  app.post<{ Body: { ids: string[] } }>('/api/v1/crm-tags/reorder', { preHandler: requireGrant('tag', 'edit') }, async (request: FastifyRequest<{ Body: { ids: string[] } }>, reply: FastifyReply) => {
     try {
       const user = request.user!;
       const ids = request.body?.ids || [];

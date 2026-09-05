@@ -34,7 +34,8 @@
       </button>
       <div class="t2-tab-spacer"></div>
       <button class="t2-btn-secondary" @click="recountUsage" :disabled="loading">🔄 Recount usage</button>
-      <button class="t2-btn-primary" @click="openCreateDialog">+ Tạo Tag</button>
+      <button v-if="coTaoNhan" class="t2-btn-primary" @click="openCreateDialog">+ Tạo Tag</button>
+      <span v-else-if="chiXem" class="t2-chi-xem">Bạn chỉ được xem danh mục nhãn.</span>
     </nav>
 
     <!-- Filters: source chips + nick dropdown (Friend tab only) -->
@@ -114,9 +115,9 @@
             </td>
             <td class="t2-cell-action">
               <div class="t2-action-group">
-                <button class="t2-btn-sm primary" @click="openEditDialog(tag)">Sửa</button>
-                <button class="t2-btn-sm" @click="openMergeDialog(tag)" :disabled="tag.source === 'zalo_real'">Merge</button>
-                <button class="t2-btn-sm danger" @click="archiveTag(tag.id)" :disabled="tag.source === 'zalo_real'">Archive</button>
+                <button v-if="coSuaNhan" class="t2-btn-sm primary" @click="openEditDialog(tag)">Sửa</button>
+                <button v-if="coXoaNhan" class="t2-btn-sm" @click="openMergeDialog(tag)" :disabled="tag.source === 'zalo_real'">Merge</button>
+                <button v-if="coXoaNhan" class="t2-btn-sm danger" @click="archiveTag(tag.id)" :disabled="tag.source === 'zalo_real'">Archive</button>
               </div>
             </td>
           </tr>
@@ -219,6 +220,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue';
 import { api } from '@/api';
+import { useAuthStore } from '@/stores/auth';
 import ZaloBrandIcon from '@/components/icons/ZaloBrandIcon.vue';
 
 interface ZaloAccount {
@@ -245,6 +247,14 @@ interface TagV2 {
   archivedAt: string | null;
   zaloAccount: ZaloAccount | null;
 }
+
+const auth = useAuthStore();
+// Khoá nút theo đúng ma trận phân quyền. Không khoá thì người chỉ có quyền xem vẫn thấy
+// đủ nút, bấm vào mới ăn 403 — họ sẽ tưởng phần mềm hỏng chứ không nghĩ là thiếu quyền.
+const coTaoNhan = computed(() => auth.canAccess('tag', 'create'));
+const coSuaNhan = computed(() => auth.canAccess('tag', 'edit'));
+const coXoaNhan = computed(() => auth.canAccess('tag', 'delete'));
+const chiXem = computed(() => !coTaoNhan.value && !coSuaNhan.value && !coXoaNhan.value);
 
 const activeTab = ref<'friend' | 'crm'>('friend');
 const tags = ref<TagV2[]>([]);
@@ -659,4 +669,5 @@ watch(activeTab, () => {
   border-radius: 6px; margin-bottom: 12px; font-size: 12px; color: #003a8c; line-height: 1.5;
 }
 .t2-zalo-icon-small { width: 20px; height: 20px; flex-shrink: 0; margin-top: 2px; }
+.t2-chi-xem { font-size: 12.5px; color: #9CA3AF; }
 </style>

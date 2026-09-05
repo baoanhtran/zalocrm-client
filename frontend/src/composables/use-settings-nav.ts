@@ -99,7 +99,7 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
       { id: 'zalo-labels', label: 'Tag Zalo native', icon: 'mdi-label-outline', route: '/settings/crm/zalo-labels', permission: 'admin', resource: 'settings', aliases: ['zalo label', 'nhãn zalo'] },
       { id: 'scoring', label: 'Lead scoring', icon: 'mdi-chart-line', route: '/settings/crm/scoring', permission: 'admin', resource: 'settings', aliases: ['điểm', 'chấm điểm', 'score'] },
       { id: 'appointments', label: 'Lịch hẹn & Nhắc hẹn', icon: 'mdi-calendar-clock-outline', route: '/settings/crm/appointments', permission: 'admin', resource: 'settings', aliases: ['lịch hẹn', 'appointment', 'nhắc hẹn', 'reminder', 'zalo reminder', 'nhắc lịch'] },
-      { id: 'lead-distribution', label: 'Chia lead tự động', icon: 'mdi-account-switch-outline', route: '/settings/crm/lead-distribution', permission: 'admin', resource: 'settings', aliases: ['chia lead', 'phân lead', 'giao lead', 'round robin', 'chăm cùng', 'sale thứ 2', 'phân công'] },
+      { id: 'lead-distribution', label: 'Chia lead tự động', icon: 'mdi-account-switch-outline', route: '/settings/crm/lead-distribution', permission: 'admin', resource: 'lead_distribution', aliases: ['chia lead', 'phân lead', 'giao lead', 'round robin', 'chăm cùng', 'sale thứ 2', 'phân công'] },
       // Mẫu tin nhắn — mở lại menu sau khi CRUD + trang quản lý đã làm xong (trước
       // đây bị cắt cùng 11 mục rỗng vì route mới chỉ là SettingsComingSoon).
       // resource 'block' (không phải 'settings') → sale cũng thấy để quản mẫu riêng.

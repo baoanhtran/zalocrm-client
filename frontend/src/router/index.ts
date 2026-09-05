@@ -149,7 +149,7 @@ const routes: RouteRecordRaw[] = [
       { path: 'crm/scoring',     name: 'Settings.Scoring',     component: () => import('@/views/ScoringSettingsView.vue'), meta: { resource: 'settings' } },
       // Lịch hẹn → nhắc hẹn Zalo (2026-06-16) — bật/tắt + delay phút gửi link đánh dấu.
       { path: 'crm/appointments', name: 'Settings.Appointments', component: () => import('@/views/settings/AppointmentSettingsPage.vue'), meta: { resource: 'settings' } },
-      { path: 'crm/lead-distribution', name: 'Settings.LeadDistribution', component: () => import('@/views/settings/LeadDistributionPage.vue'), meta: { resource: 'settings' } },
+      { path: 'crm/lead-distribution', name: 'Settings.LeadDistribution', component: () => import('@/views/settings/LeadDistributionPage.vue'), meta: { resource: 'lead_distribution' } },
       { path: 'crm/stuck',       name: 'Settings.Stuck',       component: () => import('@/views/settings/SettingsComingSoon.vue'), props: { feature: 'stuck' }, meta: { resource: 'settings' } },
       { path: 'crm/folders',     name: 'Settings.Folders',     component: () => import('@/views/settings/SettingsComingSoon.vue'), props: { feature: 'folders' }, meta: { resource: 'settings' } },
       // Mẫu tin nhắn: gate resource 'block' CHỨ KHÔNG 'settings' — sale phải vào được

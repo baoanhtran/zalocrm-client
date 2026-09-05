@@ -144,7 +144,9 @@
       </section>
 
       <div class="ld-actions">
-        <span v-if="!canEdit" class="ld-noperm">Chỉ chủ tổ chức / quản trị mới chỉnh được.</span>
+        <span v-if="!canEdit" class="ld-noperm">
+          Bạn chỉ được xem. Cần quyền Sửa ở mục “Chia lead tự động” trong nhóm quyền.
+        </span>
         <v-btn variant="outlined" :loading="previewing" :disabled="!canEdit" @click="preview">Xem trước hôm nay</v-btn>
         <v-btn color="primary" :loading="saving" :disabled="!canEdit || !dirty" @click="save">Lưu cài đặt</v-btn>
       </div>
@@ -265,7 +267,10 @@ function branchNote(m: MemberRow): { text: string; rieng: boolean } | null {
   return { text: 'đặt riêng', rieng: true };
 }
 
-const canEdit = computed(() => ['owner', 'admin'].includes(auth.user?.role ?? ''));
+// Hỏi ma trận phân quyền, KHÔNG hỏi users.role. Xét vai cũ thì người thuộc nhóm Admin mà
+// role='member' sẽ thấy toàn bộ nút xám trong khi backend vẫn nhận lệnh của họ — giao diện
+// nói một đằng, quyền thật một nẻo. canAccess() vẫn cho owner/admin đi qua như trước.
+const canEdit = computed(() => auth.canAccess('lead_distribution', 'edit'));
 
 const estimatedDaily = computed(
   () => members.value.filter((m) => m.inPool).length * (Number(form.dailyQuotaPerUser) || 0),

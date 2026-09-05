@@ -26,6 +26,10 @@ export const RESOURCES = [
   'user',               // Quản lý người dùng  → /settings/rbac/users
   'permission_group',   // Quản lý quyền       → /settings/rbac/permission-groups
   'settings',           // Cài đặt chung       → /settings/* (org, crm, channels...)
+  // Tách khỏi 'settings' 2026-08-25: bật/tắt chia lead và tick sale nào vào vòng chia là
+  // quyết định giao khách cho ai, khác hẳn về hệ quả với đổi tên tổ chức hay sửa mẫu tin.
+  // Gộp chung thì không thể cho trưởng phòng xem mà không cho họ sửa cả Cài đặt.
+  'lead_distribution',  // Chia lead tự động   → /settings/crm/lead-distribution
   'audit_log',          // Nhật ký hành động   → /settings/org/audit
   // ── Khách hàng & hội thoại (menu chính) ──
   'contact',            // Khách hàng          → /contacts
@@ -66,6 +70,11 @@ export const RESOURCE_ACTIONS: Record<Resource, readonly Action[]> = {
   engagement_score: ['access', 'view_all'],
   audit_log: ['access', 'view_all'],
   settings: ['access', 'create', 'edit'],
+  // Không có create/delete (không tạo hay xoá gì) và không có view_all (cấu hình cấp tổ
+  // chức, không có phạm vi phòng ban để mở rộng). 'edit' bao luôn nút chạy tay và nạp tồn:
+  // sửa cấu hình rồi bật công tắc thì sáng mai cũng ra kết quả y hệt, tách ra chỉ làm ma
+  // trận rối thêm mà không chặn thêm được gì.
+  lead_distribution: ['access', 'edit'],
   // Phiên chăm sóc — access=xem phiên mình, view_all=xem cả org (scope theo dept tree).
   care_session: ['access', 'view_all'],
   // Kho phương tiện — access=xem/dùng kho, create=tải lên/lưu, edit=sửa quyền/tag/watermark,
@@ -166,6 +175,8 @@ export const DEFAULT_PERMISSION_GROUPS = [
       engagement_score: viewAll('engagement_score'),
       audit_log: viewAll('audit_log'),
       settings: { access: true },
+      // Xem được ai đang nhận lead, nhưng không đổi được luật chia — giống mọi mục Cài đặt khác.
+      lead_distribution: { access: true },
       media: viewAll('media'), // xem cả kho org
     } as GrantsJson,
   },
@@ -188,6 +199,9 @@ export const DEFAULT_PERMISSION_GROUPS = [
       engagement_score: viewAll('engagement_score'),
       audit_log: { access: true },
       settings: { access: true },
+      // Chỉ xem: trưởng phòng quản một chi nhánh, còn trang này là cấu hình toàn tổ chức —
+      // đổi hạn mức chung hay tắt công tắc là ảnh hưởng mọi chi nhánh, không riêng của họ.
+      lead_distribution: { access: true },
       media: { access: true, create: true, edit: true, delete: true, view_all: true }, // full trong scope dept
     } as GrantsJson,
   },

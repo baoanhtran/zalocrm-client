@@ -338,6 +338,7 @@ const RESOURCE_LABELS: Record<string, string> = {
   engagement_score: 'Engagement / Score',
   audit_log: 'Audit Log',
   settings: 'Cài đặt',
+  lead_distribution: 'Chia lead tự động',
   care_session: 'Phiên chăm sóc',
   media: 'Kho phương tiện',
 };

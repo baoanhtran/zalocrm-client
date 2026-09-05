@@ -3,7 +3,8 @@
 /**
  * lead-distribution-routes.ts — Cấu hình + chạy tay cơ chế chia lead.
  *
- * Toàn bộ dưới quyền `settings` (admin/owner). Sale thường không thấy màn này.
+ * Toàn bộ dưới resource `lead_distribution`: `access` để xem, `edit` để đổi bất cứ thứ gì.
+ * Mặc định chỉ nhóm Admin có `edit`; CEO và Trưởng phòng chỉ xem; Sale không thấy màn này.
  */
 import type { FastifyInstance } from 'fastify';
 import { prisma } from '../../shared/database/prisma-client.js';
@@ -36,8 +37,10 @@ function clampInt(v: unknown, min: number, max: number, fallback: number): numbe
 }
 
 export async function leadDistributionRoutes(app: FastifyInstance): Promise<void> {
-  const readGuard = { preHandler: [authMiddleware, requireGrant('settings', 'access')] };
-  const writeGuard = { preHandler: [authMiddleware, requireGrant('settings', 'edit')] };
+  // Resource riêng từ 2026-08-25 (trước đây dùng chung 'settings'). 'edit' bao cả run-now
+  // và backfill — hai nút đó ghi thẳng vào dữ liệu nên không thể nằm dưới quyền chỉ-xem.
+  const readGuard = { preHandler: [authMiddleware, requireGrant('lead_distribution', 'access')] };
+  const writeGuard = { preHandler: [authMiddleware, requireGrant('lead_distribution', 'edit')] };
 
   // ── GET config + danh sách sale kèm số liệu ────────────────────────────────
   app.get('/api/v1/lead-distribution/config', readGuard, async (request, reply) => {

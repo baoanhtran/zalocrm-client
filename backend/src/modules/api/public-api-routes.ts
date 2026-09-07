@@ -33,6 +33,22 @@ async function apiKeyAuth(request: FastifyRequest, reply: FastifyReply) {
 // thì sale được giao vẫn không thấy gì — nên mọi đường gán assignedUserId ở đây đều phải
 // tạo ContactAccess kèm theo, đúng như luồng tạo KH trong giao diện đang làm.
 
+/**
+ * Lọc mảng số phụ về đúng khuôn [{phone,label}] mà Contact.phonesExtra quy ước.
+ *
+ * Cùng luật lọc với route nội bộ (contact-routes.ts): bỏ phần tử không có `phone`, vì
+ * một {label:'Mẹ'} trơ trọi sẽ hiện thành dòng trống trong hồ sơ khách mà không ai
+ * hiểu ở đâu ra. `label` để rỗng nếu không gửi — nó chỉ để hiển thị.
+ *
+ * Trả undefined khi không gửi gì, để Prisma giữ nguyên giá trị cũ thay vì xoá trắng.
+ */
+function sanitizePhonesExtra(raw: unknown): { phone: string; label: string }[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  return raw
+    .filter((p: any) => p && typeof p.phone === 'string' && p.phone.trim())
+    .map((p: any) => ({ phone: String(p.phone).trim(), label: String(p.label ?? '').trim() }));
+}
+
 async function assertOrgUser(orgId: string, userId: string): Promise<boolean> {
   const u = await prisma.user.findFirst({
     where: { id: userId, orgId, isActive: true },
@@ -102,6 +118,9 @@ export async function publicApiRoutes(app: FastifyInstance): Promise<void> {
         select: {
           id: true, fullName: true, phone: true, email: true,
           source: true, status: true, notes: true, tags: true,
+          // Trả kèm số phụ: bên gọi cần biết khách đã có số nào để HỢP NHẤT thêm số mới,
+          // chứ không phải ghi đè mất số do sale nhập tay.
+          phonesExtra: true,
           createdAt: true, updatedAt: true,
         },
         orderBy: { updatedAt: 'desc' },
@@ -164,6 +183,9 @@ export async function publicApiRoutes(app: FastifyInstance): Promise<void> {
           status: body.status ?? 'new',
           notes: body.notes,
           tags: body.tags ?? [],
+          // Số phụ: [{phone,label}]. Lọc y hệt route nội bộ — bỏ phần tử không có phone
+          // để không lưu rác {label:'Mẹ'} vào JSON rồi giao diện hiện một dòng trống.
+          phonesExtra: sanitizePhonesExtra(body.phonesExtra),
           assignedUserId: body.assignedUserId || undefined,
         },
       });
@@ -213,6 +235,10 @@ export async function publicApiRoutes(app: FastifyInstance): Promise<void> {
           status: body.status,
           notes: body.notes,
           tags: body.tags,
+          // undefined khi không gửi → Prisma bỏ qua, số phụ cũ giữ nguyên. Bên gọi muốn
+          // thêm số thì phải tự đọc mảng cũ rồi gửi lên mảng ĐÃ hợp nhất; ở đây cố ý
+          // không tự gộp, vì gộp ngầm thì không có cách nào xoá một số phụ nữa.
+          phonesExtra: sanitizePhonesExtra(body.phonesExtra),
           assignedUserId: takeOver ? body.assignedUserId : undefined,
         },
       });

@@ -59,13 +59,17 @@
 import { ref, computed, reactive } from 'vue';
 import { api } from '@/api/index';
 
-interface PropertyNeed {
-  type?: string;
-  budgetMin?: number;
+interface StudyAbroadNeed {
+  serviceType?: string;
+  country?: string;
+  eduLevel?: string;
+  gpa?: number;
+  language?: string;
+  budgetMin?: number; // TRIỆU VND
   budgetMax?: number;
-  purpose?: string;
-  decisionTimeline?: string;
-  area?: string;
+  departureTimeline?: string;
+  visaRejected?: boolean;
+  decisionMaker?: string;
 }
 
 interface Entities {
@@ -77,7 +81,7 @@ interface Entities {
   province?: string;
   district?: string;
   ward?: string;
-  propertyNeed?: PropertyNeed;
+  studyAbroadNeed?: StudyAbroadNeed;
   leadSource?: string;
   tags?: string[];
   confidenceScore?: number;
@@ -102,23 +106,22 @@ const confidencePercent = computed(() => {
   return typeof s === 'number' ? Math.round(s * 100) : null;
 });
 
-const PROPERTY_TYPE_LABEL: Record<string, string> = {
-  '1PN': 'Căn 1PN',
-  '2PN': 'Căn 2PN',
-  '3PN': 'Căn 3PN',
-  biet_thu: 'Biệt thự',
-  nha_pho: 'Nhà phố',
-  shophouse: 'Shophouse',
+const SERVICE_TYPE_LABEL: Record<string, string> = {
+  du_hoc: 'Du học',
+  xkld: 'Xuất khẩu lao động',
+  chua_ro: 'Chưa rõ hướng',
 };
-const PROPERTY_PURPOSE_LABEL: Record<string, string> = {
-  o_lien: 'Ở liền',
-  dau_tu: 'Đầu tư',
-  vua_o_vua_thue: 'Vừa ở vừa cho thuê',
+const EDU_LEVEL_LABEL: Record<string, string> = {
+  thpt: 'Tốt nghiệp cấp 3',
+  trung_cap: 'Trung cấp',
+  cao_dang: 'Cao đẳng',
+  dai_hoc: 'Đại học',
+  khac: 'Khác',
 };
 const TIMELINE_LABEL: Record<string, string> = {
-  '1_thang': '1 tháng',
   '3_thang': '3 tháng',
   '6_thang': '6 tháng',
+  '1_nam': '1 năm',
   chua_ro: 'Chưa rõ',
 };
 const LEAD_SOURCE_LABEL: Record<string, string> = {
@@ -182,22 +185,26 @@ const rows = computed<SuggestionRow[]>(() => {
 
   // M55.3 2026-05-30: propertyNeed → row checkable, BE lưu vào Contact.metadata.propertyNeed
   // + tóm tắt vào Contact.notes. KHÔNG còn info-only nữa.
-  if (e.propertyNeed) {
-    const pn = e.propertyNeed;
+  if (e.studyAbroadNeed) {
+    const sa = e.studyAbroadNeed;
     const parts: string[] = [];
-    if (pn.type) parts.push(PROPERTY_TYPE_LABEL[pn.type] ?? pn.type);
-    if (pn.budgetMin || pn.budgetMax) {
-      const b = pn.budgetMax ? `${pn.budgetMin}-${pn.budgetMax} tỷ` : `${pn.budgetMin} tỷ`;
-      parts.push(b);
+    if (sa.serviceType) parts.push(SERVICE_TYPE_LABEL[sa.serviceType] ?? sa.serviceType);
+    if (sa.country) parts.push(sa.country);
+    if (sa.eduLevel) parts.push(EDU_LEVEL_LABEL[sa.eduLevel] ?? sa.eduLevel);
+    if (sa.gpa != null) parts.push(`điểm ${sa.gpa}`);
+    if (sa.language) parts.push(sa.language);
+    if (sa.budgetMin || sa.budgetMax) {
+      parts.push(sa.budgetMax ? `${sa.budgetMin ?? '?'}-${sa.budgetMax} triệu` : `${sa.budgetMin} triệu`);
     }
-    if (pn.purpose) parts.push(PROPERTY_PURPOSE_LABEL[pn.purpose] ?? pn.purpose);
-    if (pn.area) parts.push(`tại ${pn.area}`);
-    if (pn.decisionTimeline) parts.push(`(${TIMELINE_LABEL[pn.decisionTimeline] ?? pn.decisionTimeline})`);
+    if (sa.departureTimeline) parts.push(`(đi ${TIMELINE_LABEL[sa.departureTimeline] ?? sa.departureTimeline})`);
+    // Chỉ nêu khi ĐÃ trượt — đây là cảnh báo, "chưa trượt" không cần hiển thị.
+    if (sa.visaRejected === true) parts.push('⚠ đã trượt visa');
+    if (sa.decisionMaker) parts.push(`quyết định: ${sa.decisionMaker}`);
     if (parts.length > 0) {
       result.push({
-        field: 'propertyNeed',
-        label: 'Nhu cầu BĐS',
-        value: pn, // gửi nguyên object cho BE serialize vào metadata
+        field: 'studyAbroadNeed',
+        label: 'Nhu cầu du học/XKLĐ',
+        value: sa, // gửi nguyên object cho BE serialize vào metadata
         displayValue: parts.join(' '),
         isExisting: false, // checkable, default UN-checked như field khác
       });

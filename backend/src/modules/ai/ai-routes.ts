@@ -18,6 +18,20 @@ import { listProviderModels, invalidateModelCache } from './providers/list-model
 import { logger } from '../../shared/utils/logger.js';
 import { prisma } from '../../shared/database/prisma-client.js';
 
+/* Nhãn tiếng Việt cho tóm tắt nhu cầu du học/XKLĐ ghi vào Contact.notes.
+   Khớp danh mục trong schemas/extracted-entities.ts. */
+const SERVICE_TYPE_LABEL: Record<string, string> = {
+  du_hoc: 'Du học', xkld: 'Xuất khẩu lao động', chua_ro: 'Chưa rõ hướng',
+};
+const EDU_LEVEL_LABEL: Record<string, string> = {
+  thpt: 'Tốt nghiệp cấp 3', trung_cap: 'Trung cấp', cao_dang: 'Cao đẳng',
+  dai_hoc: 'Đại học', khac: 'Khác',
+};
+const DEPARTURE_LABEL: Record<string, string> = {
+  '3_thang': 'trong 3 tháng', '6_thang': 'trong 6 tháng', '1_nam': 'trong 1 năm',
+  chua_ro: 'chưa rõ thời gian',
+};
+
 async function assertConversationReadAccess(request: FastifyRequest, reply: FastifyReply, conversationId: string) {
   const user = request.user!;
   const conversation = await prisma.conversation.findFirst({
@@ -438,31 +452,40 @@ export async function aiRoutes(app: FastifyInstance) {
               }
             }
             acceptedLog.push(item);
-          } else if (item.field === 'propertyNeed' && item.value && typeof item.value === 'object') {
-            // Lưu vào metadata.propertyNeed — merge với existing metadata
+          } else if (item.field === 'studyAbroadNeed' && item.value && typeof item.value === 'object') {
+            // Lưu vào metadata.studyAbroadNeed — merge với existing metadata
             const existingMeta = (contact.metadata && typeof contact.metadata === 'object')
               ? contact.metadata as Record<string, unknown>
               : {};
-            update.metadata = { ...existingMeta, propertyNeed: item.value };
-            // Bonus: append tóm tắt vào notes để sale đọc nhanh
-            const pn = item.value as {
-              type?: string;
+            update.metadata = { ...existingMeta, studyAbroadNeed: item.value };
+            // Bonus: append tóm tắt vào notes để tư vấn viên đọc nhanh
+            const sa = item.value as {
+              serviceType?: string;
+              country?: string;
+              eduLevel?: string;
+              gpa?: number;
+              language?: string;
               budgetMin?: number;
               budgetMax?: number;
-              purpose?: string;
-              area?: string;
-              decisionTimeline?: string;
+              departureTimeline?: string;
+              visaRejected?: boolean;
+              decisionMaker?: string;
             };
             const parts: string[] = [];
-            if (pn.type) parts.push(pn.type);
-            if (pn.budgetMin || pn.budgetMax) {
-              parts.push(pn.budgetMax ? `${pn.budgetMin || '?'}-${pn.budgetMax} tỷ` : `${pn.budgetMin} tỷ`);
+            if (sa.serviceType) parts.push(SERVICE_TYPE_LABEL[sa.serviceType] ?? sa.serviceType);
+            if (sa.country) parts.push(sa.country);
+            if (sa.eduLevel) parts.push(EDU_LEVEL_LABEL[sa.eduLevel] ?? sa.eduLevel);
+            if (sa.gpa != null) parts.push(`điểm ${sa.gpa}`);
+            if (sa.language) parts.push(sa.language);
+            if (sa.budgetMin || sa.budgetMax) {
+              parts.push(sa.budgetMax ? `${sa.budgetMin || '?'}-${sa.budgetMax} triệu` : `${sa.budgetMin} triệu`);
             }
-            if (pn.purpose) parts.push(pn.purpose);
-            if (pn.area) parts.push(`tại ${pn.area}`);
-            if (pn.decisionTimeline) parts.push(`quyết định ${pn.decisionTimeline}`);
+            if (sa.departureTimeline) parts.push(`đi ${DEPARTURE_LABEL[sa.departureTimeline] ?? sa.departureTimeline}`);
+            // Chỉ ghi khi ĐÃ trượt — "chưa trượt" là mặc định, ghi vào chỉ làm nhiễu.
+            if (sa.visaRejected === true) parts.push('ĐÃ TRƯỢT VISA');
+            if (sa.decisionMaker) parts.push(`quyết định: ${sa.decisionMaker}`);
             if (parts.length > 0) {
-              const summary = `[AI ${new Date().toLocaleDateString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' })}] Nhu cầu BĐS: ${parts.join(' · ')}`;
+              const summary = `[AI ${new Date().toLocaleDateString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' })}] Nhu cầu du học/XKLĐ: ${parts.join(' · ')}`;
               const oldNotes = (contact.notes || '').trim();
               update.notes = oldNotes ? `${oldNotes}\n\n${summary}` : summary;
             }

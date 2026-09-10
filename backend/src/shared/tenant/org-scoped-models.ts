@@ -33,4 +33,6 @@ export const ORG_SCOPED_MODELS: ReadonlySet<string> = new Set([
   // checkTenantGuard() bỏ qua im lặng (tenant-guard.ts:30) và cron chạy sai org
   // sẽ không ai chặn.
   'LeadDistributionConfig', 'LeadDistributionMember', 'LeadAssignment',
+  // Nhập khách từ Excel 2026-09-10 — lịch sử các lần nhập file.
+  'ContactImportBatch',
 ]);

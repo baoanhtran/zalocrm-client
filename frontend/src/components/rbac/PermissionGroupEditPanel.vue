@@ -339,6 +339,7 @@ const RESOURCE_LABELS: Record<string, string> = {
   audit_log: 'Audit Log',
   settings: 'Cài đặt',
   lead_distribution: 'Chia lead tự động',
+  contact_import: 'Nhập khách từ Excel',
   tag: 'Nhãn khách hàng',
   care_session: 'Phiên chăm sóc',
   media: 'Kho phương tiện',

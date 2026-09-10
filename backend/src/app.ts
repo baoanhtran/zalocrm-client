@@ -46,6 +46,7 @@ import { deviceRoutes } from './modules/devices/device-routes.js';
 import { configRoutes } from './modules/config/config-routes.js';
 import { mediaRoutes } from './modules/media/media-routes.js';
 import { contactRoutes } from './modules/contacts/contact-routes.js';
+import { contactImportRoutes } from './modules/contacts/import/excel-import-routes.js';
 import { leadDistributionRoutes } from './modules/lead-distribution/lead-distribution-routes.js';
 import { statusRoutes } from './modules/contacts/status-routes.js';
 import { contactSubResourceRoutes } from './modules/contacts/contact-sub-resource-routes.js';
@@ -273,6 +274,7 @@ async function bootstrap() {
   await app.register(configRoutes);
   await app.register(mediaRoutes);
   await app.register(contactRoutes);
+  await app.register(contactImportRoutes);
   await app.register(leadDistributionRoutes);
   await app.register(statusRoutes);
   await app.register(contactSubResourceRoutes);

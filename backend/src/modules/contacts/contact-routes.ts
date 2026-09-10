@@ -26,7 +26,7 @@ import { getContactScope, assertContactVisible, attachContactCollaboratorByUser,
 import { getZaloScope } from '../zalo/zalo-scope.js';
 import { runAutomationRules } from '../../shared/ee-registry/automation.js';
 import { normalizePhone } from '../../shared/utils/phone.js';
-import { SOURCE_SURVEY, SOURCE_SURVEY_PREFIX } from '../../shared/contact-source.js';
+import { aggregateSourcePrefix } from '../../shared/contact-source.js';
 import { logActivity, computeDiff } from '../activity/activity-logger.js';
 import { emitWebhook } from '../api/webhook-service.js';
 
@@ -74,10 +74,11 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
       // nếu không sale mất khách mà không hiểu vì sao). Chọn đúng một tỉnh
       // ("khao-sat:Hà Nội") → so bằng như thường.
       // Đẩy vào where.AND để KHÔNG giẫm lên where.OR của ô tìm kiếm.
-      if (source === SOURCE_SURVEY) {
+      const aggPrefix = aggregateSourcePrefix(source);
+      if (aggPrefix) {
         where.AND = where.AND ?? [];
         where.AND.push({
-          OR: [{ source: SOURCE_SURVEY }, { source: { startsWith: SOURCE_SURVEY_PREFIX } }],
+          OR: [{ source }, { source: { startsWith: aggPrefix } }],
         });
       } else if (source) where.source = source;
       if (status) where.status = status;

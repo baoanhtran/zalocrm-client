@@ -33,6 +33,10 @@ export const RESOURCES = [
   'audit_log',          // Nhật ký hành động   → /settings/org/audit
   // ── Khách hàng & hội thoại (menu chính) ──
   'contact',            // Khách hàng          → /contacts
+  // Nhập khách từ Excel 2026-09-10 — resource RIÊNG chứ không phải một action của
+  // 'contact': nhập file sinh ra hàng trăm khách một lúc và ghi luôn địa bàn, hệ quả
+  // khác hẳn việc sale thêm tay từng khách dưới contact.create. Chỉ có cột Truy cập.
+  'contact_import',     // Nhập khách từ Excel → nút trên /contacts
   'friend',             // Bạn bè (Zalo)       → /friends
   'conversation',       // Tin nhắn / Hội thoại→ /chat
   'customer_list',      // Tệp khách hàng      → /marketing/lists
@@ -63,6 +67,7 @@ export const RESOURCE_ACTIONS: Record<Resource, readonly Action[]> = {
   permission_group: ['access', 'create', 'edit', 'delete'],
   conversation: ['access', 'edit', 'delete', 'view_all'],
   contact: ['access', 'create', 'edit', 'delete', 'view_all'],
+  contact_import: ['access'],
   friend: ['access', 'create', 'edit', 'delete', 'view_all'],
   customer_list: ['access', 'create', 'edit', 'delete', 'view_all'],
   broadcast: ['access', 'create', 'edit', 'delete', 'view_all'],
@@ -198,6 +203,9 @@ export const DEFAULT_PERMISSION_GROUPS = [
       user: { access: true },
       conversation: { access: true, edit: true, delete: true, view_all: true }, // view_all trong scope dept
       contact: fullCrud('contact'),
+      // Nhập khách từ Excel: anh chốt 2026-09-10 mặc định mở cho Admin + Trưởng phòng,
+      // các nhóm khác để admin tự tick trong ma trận khi cần.
+      contact_import: { access: true },
       friend: fullCrud('friend'),
       customer_list: { access: true, create: true, edit: true, delete: true, view_all: true },
       broadcast: { access: true, create: true, edit: true, delete: true, view_all: true },

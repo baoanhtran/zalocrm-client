@@ -185,6 +185,8 @@ model Organization {
   mediaAssets             MediaAsset[]
   mediaAlbums             MediaAlbum[]
   mediaUsageEvents        MediaUsageEvent[]
+  // Nhập khách từ Excel 2026-09-10 — lịch sử các lần nhập file.
+  contactImportBatches    ContactImportBatch[]
 
   @@map("organizations")
 }
@@ -320,6 +322,8 @@ model User {
   createdMediaAssets        MediaAsset[]                 @relation("MediaAssetCreatedBy")
   ownedMediaAlbums          MediaAlbum[]                 @relation("MediaAlbumOwner")
   createdMediaAlbums        MediaAlbum[]                 @relation("MediaAlbumCreatedBy")
+  // Nhập khách từ Excel 2026-09-10 — ai bấm nhập lô nào.
+  contactImportBatches      ContactImportBatch[]         @relation("ContactImportCreatedBy")
 
   @@map("users")
 }
@@ -572,7 +576,9 @@ model Contact {
   // nhiều chiến dịch gửi kết bạn. Chỉ +1 khi GỬI MỚI thành công (không tính "đã là bạn").
   friendInviteSentCount  Int       @default(0) @map("friend_invite_sent_count")
   friendInviteLastSentAt DateTime? @map("friend_invite_last_sent_at")
-  importBatchId          String?   @map("import_batch_id") // soft FK -> phone_list_imports.id (model later)
+  // Soft FK -> contact_import_batches.id (Nhập khách từ Excel 2026-09-10). Cột có từ
+  // trước cho một bảng chưa bao giờ ra đời; nay dùng đúng mục đích ban đầu.
+  importBatchId          String?   @map("import_batch_id")
 
   // ── Compliance ─────────────────────────────────────────────────────────────
   consentStatus    String    @default("implicit") @map("consent_status") // implicit/granted/revoked
@@ -4166,4 +4172,45 @@ model LeadAssignment {
   @@index([orgId, userId, assignedAt])
   @@index([orgId, round, assignedAt])
   @@map("lead_assignments")
+}
+
+// ── Nhập khách từ Excel 2026-09-10 ─────────────────────────────────────────
+// Mỗi lần quản lý nhập một file là một dòng ở đây. Không có bảng này thì "hoàn tác
+// lần nhập" không làm được: sau khi ghi xong, khách nhập nhầm lẫn vào giữa hàng nghìn
+// khách cũ, lọc theo ngày tạo là vơ luôn cả khách do sale thêm tay cùng lúc.
+//
+// `Contact.importBatchId` (cột có sẵn từ trước, chưa từng dùng) trỏ về id này. CỐ Ý
+// để soft FK — xoá lịch sử lô không được phép kéo theo khách đã nhập.
+model ContactImportBatch {
+  id          String @id @default(uuid())
+  orgId       String @map("org_id")
+  createdById String @map("created_by_id")
+
+  // Tên file gốc — thứ duy nhất giúp người nhập nhận ra lô nào là lô nào khi mở lại
+  // lịch sử sau vài tuần.
+  fileName String @map("file_name")
+  // Tỉnh đã chọn ở hộp thoại. Lưu tách khỏi `source` để đổi cách đặt tên nguồn sau
+  // này không mất dữ liệu địa bàn.
+  province String
+  // Giá trị thật đã ghi vào Contact.source ("nhap-excel:<Tỉnh>").
+  source   String
+
+  totalRows        Int @map("total_rows")
+  createdCount     Int @default(0) @map("created_count")
+  skippedDuplicate Int @default(0) @map("skipped_duplicate")
+  skippedInvalid   Int @default(0) @map("skipped_invalid")
+
+  // Đã hoàn tác lúc nào, xoá được bao nhiêu khách. Hoàn tác chỉ xoá khách còn nguyên
+  // trạng (chưa hội thoại/ghi chú/lịch hẹn/chưa bị chia lead) nên undoneCount thường
+  // nhỏ hơn createdCount — giữ cả hai số để người dùng hiểu vì sao còn sót.
+  undoneAt    DateTime? @map("undone_at")
+  undoneCount Int?      @map("undone_count")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  createdBy User         @relation("ContactImportCreatedBy", fields: [createdById], references: [id], onDelete: Cascade)
+
+  @@index([orgId, createdAt])
+  @@map("contact_import_batches")
 }

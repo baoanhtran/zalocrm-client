@@ -307,9 +307,21 @@ export const SOURCE_GROUP_SCAN = 'quet-nhom';
 export const SOURCE_SURVEY = 'khao-sat';
 export const SOURCE_SURVEY_PREFIX = `${SOURCE_SURVEY}:`;
 
+/**
+ * Khách nhập hàng loạt từ file Excel (2026-09-10) — cũng lưu kèm tỉnh
+ * ("nhap-excel:Hà Nội") y như phiếu khảo sát, nên lọc theo nguồn gộp phải so TIỀN TỐ.
+ *
+ * Tách riêng khỏi khảo sát: phiếu khảo sát là khách tự điền, còn đây là danh sách xin
+ * về rồi nhập cả tệp — chất lượng khác nhau, gộp chung thì sau không tách ra để đánh
+ * giá được nguồn nào ra khách thật.
+ */
+export const SOURCE_EXCEL_IMPORT = 'nhap-excel';
+export const SOURCE_EXCEL_IMPORT_PREFIX = `${SOURCE_EXCEL_IMPORT}:`;
+
 export const SOURCE_OPTIONS = [
   { text: 'Quét nhóm', value: SOURCE_GROUP_SCAN },
   { text: 'Phiếu khảo sát', value: SOURCE_SURVEY },
+  { text: 'Nhập từ Excel', value: SOURCE_EXCEL_IMPORT },
 ];
 
 /**
@@ -327,6 +339,11 @@ export function sourceLabel(value: string | null | undefined): string {
   if (value.startsWith(SOURCE_SURVEY_PREFIX)) {
     const tinh = value.slice(SOURCE_SURVEY_PREFIX.length).trim();
     return tinh ? `Khảo sát: ${tinh}` : 'Phiếu khảo sát';
+  }
+  // Khách nhập từ Excel cũng mang tỉnh trong source — "nhap-excel:Hà Nội".
+  if (value.startsWith(SOURCE_EXCEL_IMPORT_PREFIX)) {
+    const tinh = value.slice(SOURCE_EXCEL_IMPORT_PREFIX.length).trim();
+    return tinh ? `Nhập Excel: ${tinh}` : 'Nhập từ Excel';
   }
   return SOURCE_OPTIONS.find(o => o.value === value)?.text ?? value;
 }

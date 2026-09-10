@@ -159,6 +159,14 @@ CREATE POLICY tenant_isolation ON "contact_engagement_daily"
   USING ("org_id" = current_setting('app.current_org', true) OR current_setting('app.bypass_rls', true) = 'on')
   WITH CHECK ("org_id" = current_setting('app.current_org', true) OR current_setting('app.bypass_rls', true) = 'on');
 
+-- contact_import_batches
+ALTER TABLE "contact_import_batches" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "contact_import_batches" FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tenant_isolation ON "contact_import_batches";
+CREATE POLICY tenant_isolation ON "contact_import_batches"
+  USING ("org_id" = current_setting('app.current_org', true) OR current_setting('app.bypass_rls', true) = 'on')
+  WITH CHECK ("org_id" = current_setting('app.current_org', true) OR current_setting('app.bypass_rls', true) = 'on');
+
 -- contacts
 ALTER TABLE "contacts" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "contacts" FORCE ROW LEVEL SECURITY;

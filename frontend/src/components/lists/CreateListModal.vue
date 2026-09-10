@@ -65,7 +65,7 @@
         <div v-if="activeTab === 'excel' || activeTab === 'csv'">
           <!-- Step 1: chọn file -->
           <div v-if="!fileRows.length" class="clm-field">
-            <label class="clm-label">{{ activeTab === 'excel' ? 'Upload Excel (.xlsx, .xls)' : 'Upload CSV (.csv)' }}</label>
+            <label class="clm-label">{{ activeTab === 'excel' ? 'Upload Excel (.xlsx)' : 'Upload CSV (.csv)' }}</label>
             <div
               class="clm-dropzone"
               :class="{ 'is-dragover': isDragOver }"
@@ -84,7 +84,7 @@
               <div class="clm-dz-icon">{{ activeTab === 'excel' ? '📊' : '📄' }}</div>
               <div class="clm-dz-title">Kéo thả file vào đây hoặc <u>chọn file</u></div>
               <div class="clm-dz-sub">
-                {{ activeTab === 'excel' ? '.xlsx hoặc .xls' : '.csv (UTF-8 khuyến nghị)' }} — tối đa 10MB
+                {{ activeTab === 'excel' ? '.xlsx' : '.csv (UTF-8 khuyến nghị)' }} — tối đa 10MB
               </div>
               <div v-if="fileError" class="clm-dz-error">⚠️ {{ fileError }}</div>
             </div>
@@ -252,43 +252,15 @@ import { ref, watch, computed } from 'vue';
 // Phase 08 of security plan: replaced xlsx (GHSA-4r6h-8v6p-xvw6, unpatched
 // prototype pollution + ReDoS) with exceljs, lazy-imported to keep the
 // vendor bundle small for users who never open the list-import modal.
+//
+// 2026-09-10: phần đọc file chuyển sang utils/sheet-reader dùng chung với "Nhập khách
+// từ Excel". Bản cũ ở đây cắt CSV bằng split(',') nên tên có dấu phẩy làm lệch cột mà
+// không báo gì, và nhận cả .xls trong khi exceljs không đọc được định dạng đó.
+import { readSheetFile, SheetReadError } from '@/utils/sheet-reader';
 import { useCustomerLists, type DryRunResult, type MappedRow } from '@/composables/use-customer-lists';
 import { useToast } from '@/composables/use-toast';
 
 const toast = useToast();
-
-/**
- * Read the first worksheet of an xlsx/xls/csv file into a 2D string-cell
- * array (one row per array entry). Lazy-imports exceljs so the dependency
- * only loads when a user actually opens the import modal.
- *
- * For .csv: ExcelJS parses with default delimiter detection; for shapes
- * the legacy `xlsx` library handled differently we re-do header detection
- * downstream — that logic is unchanged.
- */
-async function parseSheetToRows(buf: ArrayBuffer, filename: string): Promise<unknown[][]> {
-  const ExcelJS = (await import('exceljs')).default;
-  const wb = new ExcelJS.Workbook();
-  const lo = filename.toLowerCase();
-  if (lo.endsWith('.csv')) {
-    // exceljs's csv stream wants a Readable; for browser use, feed via text.
-    const text = new TextDecoder().decode(buf);
-    // Tiny CSV split — keeps the lazy-loaded surface small. Splits on \r?\n
-    // and on bare commas. For quoted/escaped CSVs users should use Excel.
-    const lines = text.split(/\r?\n/).filter((l) => l.length > 0);
-    return lines.map((line) => line.split(',').map((c) => c.trim()));
-  }
-  await wb.xlsx.load(buf);
-  const ws = wb.worksheets[0];
-  if (!ws) return [];
-  const out: unknown[][] = [];
-  ws.eachRow({ includeEmpty: false }, (row) => {
-    // row.values is 1-indexed with a leading null; drop index 0.
-    const values = Array.isArray(row.values) ? row.values.slice(1) : [];
-    out.push(values);
-  });
-  return out;
-}
 
 const props = defineProps<{ modelValue: boolean }>();
 const emit = defineEmits<{
@@ -308,7 +280,7 @@ const ICON_CHOICES = ['🏢', '📣', '❄️', '🌊', '📋', '🎪', '📱', 
 
 const TABS = [
   { key: 'paste'   as const, label: 'Paste danh sách', icon: '📋', accept: '' },
-  { key: 'excel'   as const, label: 'Upload Excel',    icon: '📊', accept: '.xlsx,.xls' },
+  { key: 'excel'   as const, label: 'Upload Excel',    icon: '📊', accept: '.xlsx' },
   { key: 'csv'     as const, label: 'Upload CSV',      icon: '📄', accept: '.csv' },
   // Phase Multi-Source Lead Ads 2026-05-27
   { key: 'leadads' as const, label: 'Lead Ads',        icon: '📣', accept: '' },
@@ -394,51 +366,29 @@ async function handleFile(file: File) {
     fileError.value = 'File > 10MB. Vui lòng tách nhỏ và upload lại.';
     return;
   }
-  // Validate extension theo tab đang active
+  // Validate extension theo tab đang active — nhầm tab thì nói rõ đổi tab nào.
   const lo = file.name.toLowerCase();
-  if (activeTab.value === 'excel' && !(lo.endsWith('.xlsx') || lo.endsWith('.xls'))) {
-    fileError.value = 'Tab này chỉ nhận .xlsx / .xls. Đổi sang tab CSV nếu file là .csv.';
+  if (activeTab.value === 'excel' && !lo.endsWith('.xlsx')) {
+    fileError.value = lo.endsWith('.xls')
+      ? 'File .xls đời cũ (97-2003) không đọc được. Mở bằng Excel rồi lưu lại thành .xlsx.'
+      : 'Tab này chỉ nhận .xlsx. Đổi sang tab CSV nếu file là .csv.';
     return;
   }
   if (activeTab.value === 'csv' && !lo.endsWith('.csv')) {
-    fileError.value = 'Tab này chỉ nhận .csv. Đổi sang tab Excel nếu file là .xlsx / .xls.';
+    fileError.value = 'Tab này chỉ nhận .csv. Đổi sang tab Excel nếu file là .xlsx.';
     return;
   }
-  try {
-    const buf = await file.arrayBuffer();
-    const arr = await parseSheetToRows(buf, file.name);
-    if (!arr.length) {
-      fileError.value = 'File rỗng.';
-      return;
-    }
-    // Heuristic: dòng đầu là header nếu KHÔNG có cell nào parse được thành SĐT
-    const firstRow = arr[0].map((c) => String(c ?? '').trim());
-    const looksHeader = firstRow.some((c) => /^[A-Za-zÀ-ỹĐđ\s]+$/.test(c) && c.length > 0 && c.length < 40);
-    let headers: string[];
-    let rows: string[][];
-    if (looksHeader) {
-      headers = firstRow;
-      rows = arr.slice(1).map((r) => r.map((c) => String(c ?? '').trim()));
-    } else {
-      headers = firstRow.map((_, i) => `Cột ${i + 1}`);
-      rows = arr.map((r) => r.map((c) => String(c ?? '').trim()));
-    }
-    // Strip trailing empty rows
-    while (rows.length && rows[rows.length - 1].every((c) => !c)) rows.pop();
-    if (!rows.length) {
-      fileError.value = 'Không có dòng dữ liệu sau header.';
-      return;
-    }
 
+  try {
+    const sheet = await readSheetFile(file);
     fileName.value = file.name;
-    fileHeaders.value = headers;
-    fileRows.value = rows;
-    autoGuessMapping(headers);
+    fileHeaders.value = sheet.headers;
+    fileRows.value = sheet.rows;
+    autoGuessMapping(sheet.headers);
     // Trigger dry-run khi đã có mapping phone
     if (mapping.value.phone != null) triggerFileDryRun();
   } catch (err) {
-    console.error(err);
-    fileError.value = 'Không đọc được file. Đảm bảo file CSV/Excel hợp lệ.';
+    fileError.value = err instanceof SheetReadError ? err.message : 'Không đọc được file.';
   }
 }
 

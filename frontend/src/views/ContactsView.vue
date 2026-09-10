@@ -117,6 +117,16 @@
       <button class="btn btn-quick-add" @click="showAddCustomerDialog = true" title="Thêm khách hàng nhanh">
         ⚡ Thêm KH Nhanh
       </button>
+      <!-- Nhập khách từ Excel 2026-09-10 — quyền riêng contact_import, mặc định chỉ
+           Admin + Trưởng phòng thấy nút này. -->
+      <button
+        v-if="canImportExcel"
+        class="btn btn-import-excel"
+        @click="showImportExcel = true"
+        title="Nhập nhiều khách từ file Excel/CSV"
+      >
+        📥 Nhập từ Excel
+      </button>
       <button v-if="hasAnyFilter" class="btn-clear" @click="clearAllFilters" title="Xoá tất cả bộ lọc">
         × Xoá lọc
       </button>
@@ -134,6 +144,9 @@
           <!-- Tách theo tỉnh: mỗi phiếu khảo sát lưu kèm tỉnh nên lọc được tới từng nơi -->
           <optgroup v-if="surveyProvinceOptions.length" label="Khảo sát theo tỉnh">
             <option v-for="o in surveyProvinceOptions" :key="o.value" :value="o.value">{{ o.text }}</option>
+          </optgroup>
+          <optgroup v-if="excelProvinceOptions.length" label="Nhập Excel theo tỉnh">
+            <option v-for="o in excelProvinceOptions" :key="o.value" :value="o.value">{{ o.text }}</option>
           </optgroup>
         </select>
       </div>
@@ -634,6 +647,9 @@
       @saved="onProfileSaved"
       @automation="onAutomation"
     />
+    <!-- Nhập khách hàng loạt từ Excel/CSV -->
+    <ImportExcelModal v-model="showImportExcel" @imported="fetchContacts(); loadSourceProvinces()" />
+
     <!-- Thêm KH mới — cùng component, mode create (style Smax đồng nhất) -->
     <CustomerProfileDialog
       v-model="showCreateProfile"
@@ -682,6 +698,7 @@ import PrivateBlur from '@/components/privacy/PrivateBlur.vue';
 import ParentCandidateDialog from '@/components/contacts/ParentCandidateDialog.vue';
 import DuplicateReviewDialog from '@/components/contacts/DuplicateReviewDialog.vue';
 import AddCustomerQuickDialog from '@/components/contacts/AddCustomerQuickDialog.vue';
+import ImportExcelModal from '@/components/contacts/ImportExcelModal.vue';
 import type { CareStatusValue } from '@/constants/care-status';
 import Avatar from '@/components/ui/Avatar.vue';
 import { useToast } from '@/composables/use-toast';
@@ -689,9 +706,10 @@ import { api } from '@/api';
 import {
   useContacts, useContactIntelligence,
   SOURCE_OPTIONS, STATUS_OPTIONS, GENDER_OPTIONS,
-  SOURCE_SURVEY_PREFIX, sourceLabel,
+  SOURCE_SURVEY_PREFIX, SOURCE_EXCEL_IMPORT_PREFIX, sourceLabel,
   formatRecentDateTime, cleanPreview,
 } from '@/composables/use-contacts';
+import { useAuthStore } from '@/stores/auth';
 import type { Contact } from '@/composables/use-contacts';
 import MobileContactView from '@/views/MobileContactView.vue';
 import { useMobile } from '@/composables/use-mobile';
@@ -786,6 +804,9 @@ function toggleChildColumn(key: ChildColKey) {
 const showDuplicateDialog = ref(false);
 const showCandidateDialog = ref(false);
 const showAddCustomerDialog = ref(false);
+const showImportExcel = ref(false);
+const auth = useAuthStore();
+const canImportExcel = computed(() => auth.canAccess('contact_import'));
 
 // Hồ sơ KH tổng (CustomerProfileDialog 2026-06-03) — modal tái dùng, mở từ nút "Xem hồ sơ".
 const showProfileDialog = ref(false);
@@ -1228,25 +1249,31 @@ function genderLabel(value: string) {
   return GENDER_OPTIONS.find(o => o.value === value)?.text ?? value;
 }
 /**
- * Tỉnh của khách khảo sát, lấy động từ GET /contacts/sources (endpoint sẵn có, trả
- * distinct source + count). Chỉ giữ dòng "khao-sat:*" — phần còn lại là nguồn cũ/kỹ
- * thuật (quick_add, virtual_chat_open...), không phải thứ sale cần lọc.
+ * Tỉnh của khách khảo sát và khách nhập từ Excel, lấy động từ GET /contacts/sources
+ * (endpoint sẵn có, trả distinct source + count). Chỉ giữ dòng "khao-sat:*" và
+ * "nhap-excel:*" — phần còn lại là nguồn cũ/kỹ thuật (quick_add, virtual_chat_open...),
+ * không phải thứ sale cần lọc.
  *
- * Chạy một lần lúc mở trang: danh mục tỉnh đổi theo nhịp phiếu về, không cần realtime.
+ * Chạy một lần lúc mở trang (và sau mỗi lần nhập file): danh mục tỉnh đổi theo nhịp
+ * dữ liệu về, không cần realtime.
  */
 const surveyProvinceOptions = ref<Array<{ text: string; value: string }>>([]);
-async function loadSurveyProvinces() {
+const excelProvinceOptions = ref<Array<{ text: string; value: string }>>([]);
+async function loadSourceProvinces() {
   try {
     const res = await api.get('/contacts/sources');
     const rows: Array<{ source: string; count: number }> = res.data?.sources ?? [];
-    surveyProvinceOptions.value = rows
-      .filter(r => r.source?.startsWith(SOURCE_SURVEY_PREFIX))
+    const pick = (prefix: string) => rows
+      .filter(r => r.source?.startsWith(prefix))
       .map(r => ({
         text: `${sourceLabel(r.source)} (${r.count})`,
         value: r.source,
       }));
+    surveyProvinceOptions.value = pick(SOURCE_SURVEY_PREFIX);
+    excelProvinceOptions.value = pick(SOURCE_EXCEL_IMPORT_PREFIX);
   } catch {
-    // Không có tỉnh nào thì dropdown vẫn còn nguồn gộp "Phiếu khảo sát" — vẫn lọc được.
+    // Không có tỉnh nào thì dropdown vẫn còn nguồn gộp "Phiếu khảo sát" / "Nhập từ
+    // Excel" — vẫn lọc được.
   }
 }
 function statusLabel(value: string) {
@@ -1559,7 +1586,7 @@ onMounted(() => {
   loadStats();
   loadMasterStatuses();
   loadUsers();
-  loadSurveyProvinces();
+  loadSourceProvinces();
 });
 
 // M55.2 2026-05-30 — Handle /contacts?focus={id} từ AddCustomerQuickDialog
@@ -1817,6 +1844,17 @@ watch(
   color: var(--surface);
 }
 .btn-primary:hover { background: var(--smax-primary-hover); }
+/* 2026-09-10 — nút "Nhập từ Excel" đứng cạnh "Thêm KH Nhanh", tông xanh lá để phân
+   biệt việc nhập hàng loạt với việc thêm từng khách. */
+.btn-import-excel {
+  background: #f0fdf4;
+  border: 1px solid #86efac;
+  color: #166534;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.btn-import-excel:hover { background: #dcfce7; }
+
 /* 2026-06-05 — nút "Thêm KH Nhanh" trên toolbar (thay FAB), viền primary nhẹ. */
 .btn-quick-add {
   background: var(--smax-primary-soft);

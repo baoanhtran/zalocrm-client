@@ -83,6 +83,9 @@ export const ACTION_CATEGORY: Record<string, ActivityCategory> = {
   contact_unlink_parent: 'system',
   parent_candidate_accept: 'system',
   contact_merge: 'system',
+  // Nhập khách từ Excel 2026-09-10 — mỗi LÔ một dòng, không phải mỗi khách một dòng.
+  contact_import_excel: 'system',
+  contact_import_undo: 'system',
   contact_split: 'system',
   data_import: 'system',
   data_export: 'system',

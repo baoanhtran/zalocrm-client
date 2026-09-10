@@ -12,7 +12,7 @@
  */
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../../shared/database/prisma-client.js';
-import { SOURCE_SURVEY, SOURCE_SURVEY_PREFIX } from '../../../shared/contact-source.js';
+import { aggregateSourcePrefix } from '../../../shared/contact-source.js';
 
 export interface ReportConfig {
   metrics: string[]; // messages_sent | messages_received | contacts_new | contacts_converted | appointments | avg_response_time
@@ -146,9 +146,10 @@ async function queryContactMetric(
   // mỗi tỉnh một giá trị, nên so bằng sẽ ra báo cáo rỗng. Khớp cả dạng trống tỉnh lẫn
   // dạng có tỉnh — giống hệt bộ lọc Nguồn khách ở contact-routes.
   // LIKE an toàn: tiền tố là hằng của server, không phải chuỗi người dùng gõ vào.
+  const reportAggPrefix = aggregateSourcePrefix(filters?.source);
   const sourceFilter = filters?.source
-    ? filters.source === SOURCE_SURVEY
-      ? Prisma.sql`AND (source = ${SOURCE_SURVEY} OR source LIKE ${`${SOURCE_SURVEY_PREFIX}%`})`
+    ? reportAggPrefix
+      ? Prisma.sql`AND (source = ${filters.source} OR source LIKE ${`${reportAggPrefix}%`})`
       : Prisma.sql`AND source = ${filters.source}`
     : Prisma.empty;
 

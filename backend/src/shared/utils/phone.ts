@@ -42,6 +42,30 @@ export function normalizePhone(input: string | null | undefined): string | null 
 }
 
 /**
+ * Suy `phoneNormalized` cho một payload ghi Contact. Extension Prisma gọi hàm này trên mọi
+ * create/update/updateMany/upsert của Contact, nên call site không phải tự nhớ.
+ *
+ * Chỉ động chạm khi caller THẬT SỰ ghi `phone`:
+ *   - không có key `phone`    → không đụng (giữ số chuẩn hoá hiện tại)
+ *   - `phone: undefined`      → không đụng — Prisma bỏ qua key undefined thì ở đây cũng phải bỏ qua
+ *   - `phone: null` hoặc `''` → xoá số có chủ ý → số chuẩn hoá cũng về null
+ *   - `phone: '0912…'`        → suy ra '84912…'
+ *
+ * Nhánh `undefined` là bài học 2026-09-13 trên VPS BMA: trước đó hàm chỉ kiểm `'phone' in data`,
+ * nên mọi payload kiểu `{ phone: body.phone, tags: body.tags }` mà body KHÔNG gửi phone đều âm
+ * thầm ghi phoneNormalized = NULL. Prisma bỏ qua `phone: undefined` nên số thô vẫn còn nguyên,
+ * còn số chuẩn hoá thì mất — mà ô tìm kiếm Khách hàng chỉ khớp SĐT qua phoneNormalized, nên
+ * khách tàng hình với cả admin. Dạng này có ở PUT /api/public/contacts (Apps Script khảo sát chỉ
+ * gửi nhãn + số phụ) và ở route sửa khách nội bộ; chữa ngay tại đây là bịt mọi call site cùng
+ * dạng một lượt, kể cả những chỗ viết sau này.
+ */
+export function deriveContactPhoneNormalized<T extends Record<string, unknown>>(data: T): T {
+  if (!data || typeof data !== 'object') return data;
+  if (!('phone' in data) || data.phone === undefined) return data;
+  return { ...data, phoneNormalized: normalizePhone(data.phone as string | null) };
+}
+
+/**
  * STRICT VN mobile normalizer (10-digit prefix [35789]).
  *
  * Returns canonical "84[35789]xxxxxxxx" (11 digit, no +) hoặc null.

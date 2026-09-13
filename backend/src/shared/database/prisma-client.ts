@@ -12,7 +12,8 @@
  */
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
-import { normalizePhone } from '../utils/phone.js';
+// Hàm suy phoneNormalized nằm ở phone.ts (thuần, không đụng DB) để test được mà không cần kết nối.
+import { deriveContactPhoneNormalized } from '../utils/phone.js';
 import { checkTenantGuard } from '../tenant/tenant-guard.js';
 import { getTenantContext, runWithRlsApplied } from '../tenant/tenant-context.js';
 import { config } from '../../config/index.js';
@@ -20,15 +21,6 @@ import { config } from '../../config/index.js';
 // $extends() returns a structurally-different type — alias to host extended client.
 type ExtendedPrisma = ReturnType<typeof createPrismaClient>;
 const globalForPrisma = globalThis as unknown as { prisma: ExtendedPrisma };
-
-function deriveContactPhoneNormalized<T extends Record<string, unknown>>(data: T): T {
-  if (!data || typeof data !== 'object') return data;
-  // Chỉ động chạm khi caller pass `phone` (kể cả null để clear). Không pass phone
-  // → giữ phoneNormalized hiện tại (no-op).
-  if (!('phone' in data)) return data;
-  const phoneVal = data.phone as string | null | undefined;
-  return { ...data, phoneNormalized: normalizePhone(phoneVal) };
-}
 
 /**
  * Lọc NULL byte (\u0000) khỏi mọi chuỗi trong write payload.

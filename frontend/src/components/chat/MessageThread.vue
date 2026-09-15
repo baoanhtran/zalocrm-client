@@ -1062,8 +1062,8 @@ import FriendInviteDialog from '@/components/chat/FriendInviteDialog.vue';
 import { useToast } from '@/composables/use-toast';
 import { useZaloPresence } from '@/composables/use-zalo-presence';
 import { useZaloFriendStatus } from '@/composables/use-zalo-friend-status';
-import { linkContactToZalo } from '@/composables/use-contact-zalo-actions';
-import { realZaloUid } from '@/utils/zalo-link';
+import { linkContactToZalo, fetchZaloNicks } from '@/composables/use-contact-zalo-actions';
+import { realZaloUid, resolveNickForContact } from '@/utils/zalo-link';
 import { useFriendSocket } from '@/composables/use-friend-socket';
 import { groupAvatarStore } from '@/composables/use-group-avatar-cache';
 import { registerPendingTags, clearPendingTags } from '@/composables/use-pending-mutations';
@@ -2165,15 +2165,28 @@ async function onSendInviteSubmit(message: string) {
 // → chuyển sang chat Zalo. Chat nội bộ vẫn giữ nguyên (1 KH hiện 2 dòng là chủ ý).
 async function sendInviteFromInternalChat(message: string) {
   const conv = props.conversation;
-  const accountId = conv?.zaloAccount?.id;
   const contactId = conv?.contact?.id;
   const phone = conv?.contact?.phone;
-  if (!accountId || !contactId || !phone) {
+  if (!contactId || !phone) {
     toast.error('Khách chưa có SĐT — không tra được Zalo để kết bạn');
     return;
   }
   actionLoading.value = true;
   try {
+    // Gửi từ nick của sale phụ trách KH; không xác định được thì dùng nick của chat nội bộ này
+    // (nick đang hiện trên header). Trước đây luôn dùng nick của chat → admin gửi nhầm nick.
+    let accountId = conv?.zaloAccount?.id ?? null;
+    try {
+      const pick = resolveNickForContact(
+        await fetchZaloNicks(),
+        conv?.contact?.assignedUserId ?? conv?.contact?.assignedUser?.id,
+      );
+      if ('nick' in pick) accountId = pick.nick.id;
+    } catch { /* không tải được danh sách nick → giữ nick của chat nội bộ */ }
+    if (!accountId) {
+      toast.error('Chưa xác định được nick để gửi lời mời');
+      return;
+    }
     const r = await linkContactToZalo({ contactId, phone, accountId });
     if (r.status !== 'linked') {
       toast.error(r.status === 'not_found' ? `${r.message} — chưa gửi được lời mời` : r.message);

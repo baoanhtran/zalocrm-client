@@ -55,11 +55,20 @@
         >💬 Mở chat Zalo</button>
         <button
           v-else
+          ref="findZaloBtn"
           class="cdp-btn-primary"
           :disabled="findingZalo"
-          :title="contact.phone ? 'Tra SĐT trên Zalo bằng nick của bạn — có Zalo thì mở chat Zalo' : 'Khách chưa có SĐT'"
+          :title="contact.phone ? 'Tra SĐT trên Zalo bằng nick của sale phụ trách — có Zalo thì mở chat Zalo' : 'Khách chưa có SĐT'"
           @click="onFindZalo"
         >{{ findingZalo ? '⏳' : '🔍' }} Tìm Zalo</button>
+        <NickPickerPopup
+          v-model="nickPicker.open"
+          :accounts="nickPicker.choices"
+          :trigger-el="findZaloBtn"
+          :title="nickPicker.title"
+          :busy="findingZalo"
+          @pick="onNickPicked"
+        />
         <button
           class="cdp-btn-virtual"
           :disabled="openingInternal"
@@ -236,6 +245,7 @@
 import { ref, computed, watch, onMounted } from 'vue';
 import { api } from '@/api/index';
 import { useContactZaloActions } from '@/composables/use-contact-zalo-actions';
+import NickPickerPopup from '@/components/zalo-accounts/NickPickerPopup.vue';
 import type { Contact } from '@/composables/use-contacts';
 import PrivateBlur from '@/components/privacy/PrivateBlur.vue';
 
@@ -454,7 +464,8 @@ function addNote() { activeTab.value = 'notes'; /* TODO: focus textarea note */ 
 
 // "Tìm Zalo" + "Chat nội bộ" — dùng chung với CustomerProfileDialog. Bản cũ điều hướng bằng
 // query.conversationId mà ChatView không đọc → bấm xong vào /chat trống.
-const { findingZalo, openingInternal, findZaloAndOpen, openInternalChat } = useContactZaloActions();
+const { findingZalo, openingInternal, nickPicker, onNickPicked, findZaloAndOpen, openInternalChat } = useContactZaloActions();
+const findZaloBtn = ref<HTMLElement | null>(null);
 async function onFindZalo() {
   if (await findZaloAndOpen(props.contact)) emit('saved');
 }

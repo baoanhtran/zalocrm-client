@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, it, expect } from 'vitest';
-import { realZaloUid, pickConversationForContact, pickLookupNick } from './zalo-link';
+import { realZaloUid, pickConversationForContact, resolveNickForContact } from './zalo-link';
 
 describe('realZaloUid', () => {
   it('chat nội bộ → null (mã virtual: không phải UID Zalo)', () => {
@@ -41,21 +41,25 @@ describe('pickConversationForContact', () => {
   });
 });
 
-describe('pickLookupNick', () => {
-  const mineOff = { id: 'n1', status: 'disconnected', ownerUserId: 'me' };
-  const mineOn = { id: 'n2', status: 'connected', ownerUserId: 'me' };
-  const otherOn = { id: 'n3', status: 'connected', ownerUserId: 'boss' };
+describe('resolveNickForContact', () => {
+  const hien = { id: 'hien', status: 'connected', ownerUserId: 'u-hien' }; // nick tạo sớm nhất
+  const maiHoa = { id: 'maihoa', status: 'connected', ownerUserId: 'u-dung' };
+  const linhOff = { id: 'linh', status: 'disconnected', ownerUserId: 'u-phuong' };
 
-  it('nick chỉ định đang kết nối → dùng nick đó', () => {
-    expect(pickLookupNick([mineOn, otherOn], 'me', 'n3')?.id).toBe('n3');
+  it('dùng nick của sale phụ trách, KHÔNG lấy nick tạo sớm nhất (lỗi: mọi khách rơi vào nick Hien)', () => {
+    expect(resolveNickForContact([hien, maiHoa], 'u-dung')).toEqual({ nick: maiHoa });
   });
-  it('nick chỉ định mất kết nối → ưu tiên nick của mình đang kết nối', () => {
-    expect(pickLookupNick([otherOn, mineOff, mineOn], 'me', 'n1')?.id).toBe('n2');
+  it('khách chưa có sale phụ trách → cho chọn trong các nick đang kết nối', () => {
+    expect(resolveNickForContact([hien, maiHoa, linhOff], null)).toEqual({ choices: [hien, maiHoa], reason: 'no_sale' });
   });
-  it('không có nick của mình → nick được cấp quyền đang kết nối', () => {
-    expect(pickLookupNick([mineOff, otherOn], 'me')?.id).toBe('n3');
+  it('nick của sale phụ trách mất kết nối → cho chọn nick khác đang kết nối', () => {
+    expect(resolveNickForContact([hien, linhOff], 'u-phuong')).toEqual({ choices: [hien], reason: 'sale_no_nick' });
   });
-  it('không nick nào kết nối → null', () => {
-    expect(pickLookupNick([mineOff], 'me')).toBeNull();
+  it('sale phụ trách có nhiều nick đang kết nối → chỉ cho chọn giữa các nick đó', () => {
+    const maiHoa2 = { id: 'maihoa2', status: 'connected', ownerUserId: 'u-dung' };
+    expect(resolveNickForContact([hien, maiHoa, maiHoa2], 'u-dung')).toEqual({ choices: [maiHoa, maiHoa2], reason: 'sale_many_nicks' });
+  });
+  it('không nick nào kết nối → danh sách chọn rỗng', () => {
+    expect(resolveNickForContact([linhOff], 'u-phuong')).toEqual({ choices: [], reason: 'sale_no_nick' });
   });
 });

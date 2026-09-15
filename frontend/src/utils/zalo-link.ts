@@ -39,20 +39,24 @@ export function pickConversationForContact<T extends ConvLike>(convs: T[], conta
   return mine.find((c) => !isVirtualConversation(c)) ?? mine[0] ?? null;
 }
 
+export type NickResolution<T> =
+  | { nick: T }
+  | { choices: T[]; reason: 'no_sale' | 'sale_no_nick' | 'sale_many_nicks' };
+
 /**
- * Nick dùng để tra SĐT: nick chỉ định (nếu đang kết nối) → nick của chính mình → nick được cấp quyền.
- * Nick mất kết nối tra là lỗi NOT_CONNECTED nên bỏ qua.
+ * Nick để tra SĐT / gửi lời mời cho KH = nick của sale phụ trách (user chốt 2026-09-15). Trước đó lấy
+ * "nick đầu tiên" nên admin (không sở hữu nick) bấm khách nào cũng rơi vào nick tạo sớm nhất.
+ * Sale phụ trách có đúng 1 nick đang kết nối → dùng luôn; còn lại → trả danh sách để người bấm chọn.
+ * Nick mất kết nối tra là lỗi NOT_CONNECTED nên không đưa vào.
  */
-export function pickLookupNick<T extends NickLike>(
+export function resolveNickForContact<T extends NickLike>(
   nicks: T[],
-  myUserId: string | null | undefined,
-  preferredId?: string | null,
-): T | null {
+  assignedUserId: string | null | undefined,
+): NickResolution<T> {
   const live = nicks.filter((n) => n.status === 'connected');
-  return (
-    live.find((n) => n.id === preferredId)
-    ?? live.find((n) => n.ownerUserId === myUserId)
-    ?? live[0]
-    ?? null
-  );
+  if (!assignedUserId) return { choices: live, reason: 'no_sale' };
+  const saleNicks = live.filter((n) => n.ownerUserId === assignedUserId);
+  if (saleNicks.length === 1) return { nick: saleNicks[0] };
+  if (saleNicks.length > 1) return { choices: saleNicks, reason: 'sale_many_nicks' };
+  return { choices: live, reason: 'sale_no_nick' };
 }

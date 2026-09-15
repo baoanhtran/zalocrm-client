@@ -17,6 +17,7 @@ import { logger } from '../../shared/utils/logger.js';
 import { mergeContacts } from './merge-service.js';
 import { findExistingUserConversation } from '../chat/conversation-resolver.js';
 import { buildVirtualChatWelcome } from './virtual-chat-welcome.js';
+import { pickVirtualChatNick } from './virtual-chat-nick.js';
 import { runContactIntelligence } from './contact-intelligence.js';
 import { backfillGlobalId, backfillOrphanFriends } from './backfill-global-id.js';
 import { backfillMissingFriends } from './backfill-missing-friends.js';
@@ -835,12 +836,20 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
         contactId,
       });
 
-      // 2. Pick nick — M55 2026-05-30: ưu tiên nick mình sở hữu, fallback nick org
-      // (sale mới chưa có nick Zalo vẫn mở được virtual chat — vì virtual ko gửi SDK,
-      // chỉ cần 1 zaloAccountId hợp lệ trong org để satisfy schema FK).
+      // 2. Pick nick — nick sale phụ trách KH → nick mình sở hữu → nick mình truy cập được
+      // (2026-09-15: admin không sở hữu nick nên chat nội bộ từng rơi vào nick sale khác).
+      // Fallback nick org: sale mới chưa có nick Zalo vẫn mở được virtual chat — vì virtual ko gửi SDK,
+      // chỉ cần 1 zaloAccountId hợp lệ trong org để satisfy schema FK.
       const scope = await getZaloScope(user.id, user.orgId, user.role);
+      const assignedSaleNicks = contact.assignedUserId
+        ? await prisma.zaloAccount.findMany({
+            where: { orgId: user.orgId, ownerUserId: contact.assignedUserId, archivedAt: null },
+            orderBy: { createdAt: 'asc' },
+            select: { id: true },
+          })
+        : [];
       let myNickId: string | null =
-        scope.accessibleIds.find((id) => scope.ownedIds.has(id)) ?? scope.accessibleIds[0] ?? null;
+        pickVirtualChatNick(scope.accessibleIds, scope.ownedIds, assignedSaleNicks.map((n) => n.id));
 
       if (!myNickId) {
         // Fallback: pick bất kỳ ZaloAccount nào trong org (virtual chat ko cần nick thật)
@@ -882,17 +891,19 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
         return reply.status(200).send({ conversationId: realConv.id, created: false });
       }
 
-      // 3. Idempotent: tìm virtual conv đã có cho cặp (contact, nick) chưa
+      // 3. Idempotent: dùng lại chat nội bộ đã có của KH — ưu tiên trên nick vừa chọn, rồi trên nick khác
+      // mình truy cập được (nick ưu tiên đổi theo sale phụ trách → không đẻ thêm chat nội bộ thứ 2).
       const externalThreadId = `virtual:${contactId}:${myNickId}`;
-      const existing = await prisma.conversation.findFirst({
+      const virtualConvs = await prisma.conversation.findMany({
         where: {
           orgId: user.orgId,
           contactId,
-          zaloAccountId: myNickId,
           isVirtual: true,
+          zaloAccountId: { in: [myNickId, ...scope.accessibleIds] },
         },
-        select: { id: true },
+        select: { id: true, zaloAccountId: true },
       });
+      const existing = virtualConvs.find((c) => c.zaloAccountId === myNickId) ?? virtualConvs[0] ?? null;
 
       if (existing) {
         // M55: idempotent — sale touch virtual conv → attach collaborator
@@ -903,7 +914,7 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
           source: 'virtual_chat_open',
         });
         // M55.3 2026-05-30: trigger AI dup-alert message nếu chưa từng gửi (idempotent)
-        void sendDuplicateAlertMessage(existing.id, contactId, user.orgId, contact, myNickId, (app as any).io);
+        void sendDuplicateAlertMessage(existing.id, contactId, user.orgId, contact, existing.zaloAccountId, (app as any).io);
         return reply.status(200).send({ conversationId: existing.id, created: false });
       }
 

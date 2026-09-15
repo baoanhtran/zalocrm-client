@@ -439,12 +439,21 @@
               <button v-if="c.hasZalo" class="btn primary" @click="goChat">💬 Mở chat Zalo</button>
               <button
                 v-else
+                ref="findZaloBtn"
                 class="btn primary"
                 :disabled="findingZalo"
-                :title="c.phone ? 'Tra SĐT trên Zalo bằng nick của bạn — có Zalo thì mở chat Zalo' : 'Khách chưa có SĐT'"
+                :title="c.phone ? 'Tra SĐT trên Zalo bằng nick của sale phụ trách — có Zalo thì mở chat Zalo' : 'Khách chưa có SĐT'"
                 @click="onFindZalo"
               >{{ findingZalo ? '⏳ Đang tìm…' : '🔍 Tìm Zalo' }}</button>
               <button class="btn virtual" :disabled="openingInternal" @click="onInternalChat">🔒 Chat nội bộ</button>
+              <NickPickerPopup
+                v-model="nickPicker.open"
+                :accounts="nickPicker.choices"
+                :trigger-el="findZaloBtn"
+                :title="nickPicker.title"
+                :busy="findingZalo"
+                @pick="onNickPicked"
+              />
               <button class="btn" @click="$emit('automation', c)">⚡ Marketing</button>
               <span class="spacer"></span>
               <button class="btn" :disabled="saving" @click="save">{{ saving ? '⏳ Đang lưu…' : '💾 Lưu thay đổi' }}</button>
@@ -463,6 +472,7 @@ import { useRouter } from 'vue-router';
 import { api } from '@/api/index';
 import { useToast } from '@/composables/use-toast';
 import { useContactZaloActions } from '@/composables/use-contact-zalo-actions';
+import NickPickerPopup from '@/components/zalo-accounts/NickPickerPopup.vue';
 import { formatRecentDateTime, cleanPreview } from '@/composables/use-contacts';
 import PrivateBlur from '@/components/privacy/PrivateBlur.vue';
 import TagCrmBar from '@/components/chat/TagCrmBar.vue';
@@ -777,7 +787,8 @@ function goChat() {
   router.push({ path: '/chat', query: { contactId: c.value.id } });
 }
 
-const { findingZalo, openingInternal, findZaloAndOpen, openInternalChat } = useContactZaloActions();
+const { findingZalo, openingInternal, nickPicker, onNickPicked, findZaloAndOpen, openInternalChat } = useContactZaloActions();
+const findZaloBtn = ref<HTMLElement | null>(null);
 async function onFindZalo() {
   if (!c.value) return;
   if (await findZaloAndOpen(c.value)) {

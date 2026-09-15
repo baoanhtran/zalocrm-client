@@ -22,11 +22,6 @@
           hide-details="auto"
           class="msg-input"
         />
-        <div class="hints">
-          <button class="hint-chip" type="button" @click="message = 'Xin chào, mình muốn kết bạn với bạn'">Mặc định</button>
-          <button class="hint-chip" type="button" @click="message = 'Chào bạn, mình là sale bên Hs Holding. Kết bạn để mình tư vấn nhé!'">Sale intro</button>
-          <button class="hint-chip" type="button" @click="message = ''">Để trống</button>
-        </div>
       </v-card-text>
       <v-card-actions class="invite-actions">
         <v-spacer />
@@ -94,25 +89,5 @@ function onSubmit() {
   margin-bottom: 6px;
 }
 .msg-input { font-size: 14px; }
-.hints {
-  display: flex;
-  gap: 6px;
-  margin-top: 8px;
-  flex-wrap: wrap;
-}
-.hint-chip {
-  font-size: 11px;
-  padding: 4px 8px;
-  border: 1px solid rgba(0,0,0,0.12);
-  border-radius: 999px;
-  background: #f8fafc;
-  color: #475569;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-.hint-chip:hover {
-  background: #e2e8f0;
-  border-color: rgba(0,0,0,0.2);
-}
 .invite-actions { padding: 8px 20px 16px; }
 </style>

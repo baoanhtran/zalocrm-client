@@ -437,7 +437,14 @@
             </template>
             <template v-else-if="c">
               <button v-if="c.hasZalo" class="btn primary" @click="goChat">💬 Mở chat Zalo</button>
-              <button v-else class="btn virtual" @click="goChat">🔒 Mở chat nội bộ</button>
+              <button
+                v-else
+                class="btn primary"
+                :disabled="findingZalo"
+                :title="c.phone ? 'Tra SĐT trên Zalo bằng nick của bạn — có Zalo thì mở chat Zalo' : 'Khách chưa có SĐT'"
+                @click="onFindZalo"
+              >{{ findingZalo ? '⏳ Đang tìm…' : '🔍 Tìm Zalo' }}</button>
+              <button class="btn virtual" :disabled="openingInternal" @click="onInternalChat">🔒 Chat nội bộ</button>
               <button class="btn" @click="$emit('automation', c)">⚡ Marketing</button>
               <span class="spacer"></span>
               <button class="btn" :disabled="saving" @click="save">{{ saving ? '⏳ Đang lưu…' : '💾 Lưu thay đổi' }}</button>
@@ -455,6 +462,7 @@ import { ref, computed, watch, nextTick } from 'vue';
 import { useRouter } from 'vue-router';
 import { api } from '@/api/index';
 import { useToast } from '@/composables/use-toast';
+import { useContactZaloActions } from '@/composables/use-contact-zalo-actions';
 import { formatRecentDateTime, cleanPreview } from '@/composables/use-contacts';
 import PrivateBlur from '@/components/privacy/PrivateBlur.vue';
 import TagCrmBar from '@/components/chat/TagCrmBar.vue';
@@ -767,6 +775,19 @@ function goChat() {
   if (!c.value) return;
   close();
   router.push({ path: '/chat', query: { contactId: c.value.id } });
+}
+
+const { findingZalo, openingInternal, findZaloAndOpen, openInternalChat } = useContactZaloActions();
+async function onFindZalo() {
+  if (!c.value) return;
+  if (await findZaloAndOpen(c.value)) {
+    emit('saved'); // hasZalo vừa đổi → danh sách KH tải lại
+    close();
+  }
+}
+async function onInternalChat() {
+  if (!c.value) return;
+  if (await openInternalChat(c.value.id)) close();
 }
 
 // ── Computed display ──

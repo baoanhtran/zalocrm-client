@@ -46,7 +46,7 @@
       </div>
 
       <!-- 2 action buttons chính -->
-      <!-- M53 2026-05-30: KH no-Zalo → nút "Mở chat nội bộ" (cam) thay "Mở chat Zalo" (xanh) -->
+      <!-- KH có Zalo → "Mở chat Zalo"; chưa có → "Tìm Zalo" (tra SĐT). "Chat nội bộ" (cam) KH nào cũng có. -->
       <div class="cdp-actions">
         <button
           v-if="contact.hasZalo"
@@ -55,14 +55,20 @@
         >💬 Mở chat Zalo</button>
         <button
           v-else
+          class="cdp-btn-primary"
+          :disabled="findingZalo"
+          :title="contact.phone ? 'Tra SĐT trên Zalo bằng nick của bạn — có Zalo thì mở chat Zalo' : 'Khách chưa có SĐT'"
+          @click="onFindZalo"
+        >{{ findingZalo ? '⏳' : '🔍' }} Tìm Zalo</button>
+        <button
           class="cdp-btn-virtual"
-          :disabled="virtualLoading"
-          @click="openVirtualChat"
-          title="KH chưa có Zalo — mở chat nội bộ để ghi nhật ký + AI gợi ý khai thác thông tin"
+          :disabled="openingInternal"
+          @click="openInternalChat(contact.id)"
+          title="Chat nội bộ — ghi nhật ký chăm sóc + AI gợi ý khai thác thông tin, tin KHÔNG gửi đi Zalo"
         >
-          <span v-if="virtualLoading">⏳</span>
+          <span v-if="openingInternal">⏳</span>
           <span v-else>🔒</span>
-          Mở chat nội bộ
+          Chat nội bộ
         </button>
         <button class="cdp-btn-outline" @click="openAppointment">📅 Đặt lịch hẹn</button>
         <button class="cdp-btn-outline" @click="addNote">📝 Thêm note</button>
@@ -228,12 +234,10 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue';
-import { useRouter } from 'vue-router';
 import { api } from '@/api/index';
+import { useContactZaloActions } from '@/composables/use-contact-zalo-actions';
 import type { Contact } from '@/composables/use-contacts';
 import PrivateBlur from '@/components/privacy/PrivateBlur.vue';
-
-const router = useRouter();
 
 const props = defineProps<{ contact: Contact }>();
 const emit = defineEmits<{ close: []; 'go-chat': []; saved: []; edit: [] }>();
@@ -448,26 +452,11 @@ function apptStatusLabel(s: string): string {
 function openAppointment() { emit('edit'); /* mở dialog nhắc hẹn — hiện tại reuse edit */ }
 function addNote() { activeTab.value = 'notes'; /* TODO: focus textarea note */ }
 
-// M53 2026-05-30: Mở Virtual Chat cho KH no-Zalo
-const virtualLoading = ref(false);
-async function openVirtualChat() {
-  if (virtualLoading.value) return;
-  virtualLoading.value = true;
-  try {
-    const res = await api.post<{ conversationId: string; created: boolean }>(
-      `/contacts/${props.contact.id}/virtual-conversation`,
-      {}
-    );
-    const convId = res.data?.conversationId;
-    if (!convId) throw new Error('No conversationId returned');
-    // Navigate sang /chat với conversation virtual mở sẵn
-    await router.push({ path: '/chat', query: { conversationId: convId } });
-  } catch (e: any) {
-    const msg = e?.response?.data?.message || e?.message || 'Lỗi mở chat nội bộ';
-    alert(msg);
-  } finally {
-    virtualLoading.value = false;
-  }
+// "Tìm Zalo" + "Chat nội bộ" — dùng chung với CustomerProfileDialog. Bản cũ điều hướng bằng
+// query.conversationId mà ChatView không đọc → bấm xong vào /chat trống.
+const { findingZalo, openingInternal, findZaloAndOpen, openInternalChat } = useContactZaloActions();
+async function onFindZalo() {
+  if (await findZaloAndOpen(props.contact)) emit('saved');
 }
 </script>
 

@@ -158,6 +158,7 @@ import { useChatOperations } from '@/composables/use-chat-operations';
 import { useZaloAccounts } from '@/composables/use-zalo-accounts';
 import { useWorkScope } from '@/composables/use-work-scope';
 import { shouldAdoptNickScope } from '@/composables/work-scope-logic';
+import { pickConversationForContact } from '@/utils/zalo-link';
 import MobileChatView from '@/views/MobileChatView.vue';
 import { useMobile } from '@/composables/use-mobile';
 
@@ -632,7 +633,8 @@ watch(
   ([contactId, convs]) => {
     if (!contactId || typeof contactId !== 'string') return;
     if (!Array.isArray(convs) || !convs.length) return;
-    const match = convs.find(c => c.contact?.id === contactId && c.threadType === 'user');
+    // KH có cả chat Zalo lẫn chat nội bộ → "Mở chat Zalo" phải ra chat Zalo, không lấy dòng đứng trước.
+    const match = pickConversationForContact(convs, contactId);
     if (match) {
       router.replace({ name: 'Chat', params: { convId: match.id } });
     }

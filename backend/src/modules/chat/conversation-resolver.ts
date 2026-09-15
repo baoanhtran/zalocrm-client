@@ -70,9 +70,11 @@ export async function findExistingUserConversation(args: ResolveConvArgs): Promi
   }
 
   // 3. A2 theo contactId (dự phòng): dùng lại conversation user sẵn có của contact trên nick.
+  //    Loại chat nội bộ (isVirtual): nó chung contact + nick nhưng không phải hội thoại Zalo —
+  //    không loại thì tin Zalo thật của KH rơi vào chat nội bộ.
   if (contactId) {
     const sibling = await prisma.conversation.findFirst({
-      where: { zaloAccountId: nickId, contactId, threadType: 'user' },
+      where: { zaloAccountId: nickId, contactId, threadType: 'user', isVirtual: false },
       orderBy: { lastMessageAt: 'desc' },
       select: { id: true },
     });

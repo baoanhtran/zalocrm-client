@@ -138,6 +138,23 @@ describe('Friend Requests', () => {
     expect(zaloOpsMock.sendFriendRequest).not.toHaveBeenCalled();
   });
 
+  // Chat nội bộ có externalThreadId giả `virtual:<contact>:<nick>` — gửi thẳng cho Zalo thì
+  // nhận zalo:114 "Tham số không hợp lệ" + toast "Máy chủ lỗi". Chặn từ route, báo rõ lý do.
+  it('POST /friends/requests — 400 khi userId là mã chat nội bộ, không gọi Zalo', async () => {
+    const res = await buildApp().inject({
+      method: 'POST', url: `${BASE}/requests`,
+      payload: { userId: 'virtual:c-1:za-1', message: 'Hi!' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(zaloOpsMock.sendFriendRequest).not.toHaveBeenCalled();
+  });
+
+  it('GET /friends/requests/:userId/status — 400 khi userId là mã chat nội bộ, không gọi Zalo', async () => {
+    const res = await buildApp().inject({ method: 'GET', url: `${BASE}/requests/virtual:c-1:za-1/status` });
+    expect(res.statusCode).toBe(400);
+    expect(zaloOpsMock.getFriendRequestStatus).not.toHaveBeenCalled();
+  });
+
   it('POST /friends/requests/:userId/accept — accepts request', async () => {
     zaloOpsMock.acceptFriendRequest.mockResolvedValue({ success: true });
     const res = await buildApp().inject({ method: 'POST', url: `${BASE}/requests/u9/accept`, payload: {} });

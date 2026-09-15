@@ -139,7 +139,7 @@
           <div class="ci-name-row">
             <div class="ci-name">
               <span v-if="conv.threadType === 'group'" class="group-icon">👥</span>
-              <span v-if="conv.isVirtual" class="virtual-chip" title="Chat nội bộ — KH chưa có Zalo, tin nhắn KHÔNG gửi đi">🔒</span>
+              <span v-if="conv.isVirtual" class="virtual-chip" title="Chat nội bộ — tin nhắn KHÔNG gửi đi Zalo">🔒</span>
               {{ displayName(conv) }}
               <!-- Theo dõi (anh chốt 2026-06-15): khách đang trong "theo dõi" → chuông ngay sau tên.
                    Icon hệ thống mdi (đồng bộ), không emoji. -->

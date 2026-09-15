@@ -411,10 +411,16 @@ export async function friendRoutes(app: FastifyInstance) {
     }
   });
 
+  // Chat nội bộ (isVirtual) có externalThreadId giả `virtual:<contact>:<nick>` — không phải UID Zalo.
+  // Gửi thẳng cho Zalo thì nhận zalo:114 "Tham số không hợp lệ" → chặn sớm, báo rõ phải làm gì.
+  const VIRTUAL_UID_ERROR = 'Đây là chat nội bộ, chưa có UID Zalo của khách. Tìm Zalo theo SĐT trước rồi mới kết bạn.';
+  const isVirtualUid = (uid: string) => uid.startsWith('virtual:');
+
   // GET .../friends/requests/:userId/status — check request status with a user
   app.get(`${BASE}/requests/:userId/status`, async (request: FastifyRequest, reply: FastifyReply) => {
     const { accountId, userId } = request.params as { accountId: string; userId: string };
     const user = request.user!;
+    if (isVirtualUid(userId)) return reply.status(400).send({ error: VIRTUAL_UID_ERROR });
     try {
       if (!await checkAccess(request, reply, accountId, 'read')) return;
       await resolveAccount(accountId, user.orgId);
@@ -431,6 +437,7 @@ export async function friendRoutes(app: FastifyInstance) {
     const { userId, message = '' } = request.body as { userId: string; message?: string };
     const user = request.user!;
     if (!userId) return reply.status(400).send({ error: 'userId is required' });
+    if (isVirtualUid(userId)) return reply.status(400).send({ error: VIRTUAL_UID_ERROR });
     if (!await checkAccess(request, reply, accountId, 'chat')) return;
     try {
       await resolveAccount(accountId, user.orgId);

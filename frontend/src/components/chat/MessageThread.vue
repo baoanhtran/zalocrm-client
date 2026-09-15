@@ -206,7 +206,7 @@
               <span class="cnt-in">{{ msgInCount }}</span><ArrowDownLeftIcon class="cnt-arrow" :size="12" :stroke-width="2" />
               <span class="cnt-out">{{ msgOutCount }}</span><ArrowUpRightIcon class="cnt-arrow" :size="12" :stroke-width="2" />
             </span>
-            <!-- M53 2026-05-30: Virtual KH → chấm đỏ nháy + "KH chưa bật tìm kiếm Zalo công khai" -->
+            <!-- M53 2026-05-30: chat nội bộ → chấm nháy + nhãn "Chat nội bộ" -->
             <template v-if="isVirtualConv">
               <span class="ch-sep">|</span>
               <span class="last-online is-virtual" :title="virtualTooltip">
@@ -1062,6 +1062,8 @@ import FriendInviteDialog from '@/components/chat/FriendInviteDialog.vue';
 import { useToast } from '@/composables/use-toast';
 import { useZaloPresence } from '@/composables/use-zalo-presence';
 import { useZaloFriendStatus } from '@/composables/use-zalo-friend-status';
+import { linkContactToZalo } from '@/composables/use-contact-zalo-actions';
+import { realZaloUid } from '@/utils/zalo-link';
 import { useFriendSocket } from '@/composables/use-friend-socket';
 import { groupAvatarStore } from '@/composables/use-group-avatar-cache';
 import { registerPendingTags, clearPendingTags } from '@/composables/use-pending-mutations';
@@ -1675,9 +1677,11 @@ const cungChamTooltip = computed(() => {
   });
   return `${list.length} sale đang/đã chăm KH này:\n${lines.join('\n')}`;
 });
-const virtualStatusLabel = 'KH chưa bật tìm kiếm Zalo công khai';
+// Trước ghi "KH chưa bật tìm kiếm Zalo công khai" dù chưa ai tra SĐT → báo sai. Giờ chat nội bộ
+// mở được cho cả KH đã có Zalo nên nhãn chỉ nói đây là kênh gì.
+const virtualStatusLabel = 'Chat nội bộ';
 const virtualTooltip =
-  'KH chưa bật tìm kiếm Zalo công khai. Tin nhắn lưu nội bộ làm nhật ký chăm sóc — KHÔNG gửi đi Zalo.';
+  'Tin nhắn lưu nội bộ làm nhật ký chăm sóc — KHÔNG gửi đi Zalo. Muốn nhắn Zalo: bấm "Kết bạn" để tra SĐT.';
 
 function onAiSuggestionApplied(
   acceptedFields: Array<{ field: string; value: unknown }>,
@@ -1914,7 +1918,8 @@ const zaloFriend = useZaloFriendStatus(
     if (props.conversation?.threadType !== 'user') return null;
     // Per-account UID: externalThreadId là UID KH FROM POV nick này.
     // contact.zaloUid có thể là UID từ nick khác → getFriendRequestStatus trả sai/empty.
-    return props.conversation?.externalThreadId || props.conversation?.contact?.zaloUid || null;
+    // Chat nội bộ: mã `virtual:` không phải UID → không hỏi Zalo (từng gây toast "Máy chủ lỗi").
+    return realZaloUid(props.conversation);
   },
 );
 
@@ -1986,6 +1991,8 @@ watch(() => props.conversation?.id, () => {
 
 const friendshipState = computed<FriendshipState>(() => {
   if (props.conversation?.threadType !== 'user') return null;
+  // Chat nội bộ chưa có UID Zalo → chỉ còn nút "Kết bạn" (tra SĐT rồi mới gửi lời mời).
+  if (isVirtualConv.value) return null;
 
   const fs = props.conversation?.friendship;
   // "Was once friend" = có becameFriendAt hoặc friendshipStatus đã từng 'accepted'/'removed'.
@@ -2107,11 +2114,20 @@ const showInviteDialog = ref(false);
 
 function getActionContext() {
   const accountId = props.conversation?.zaloAccount?.id;
-  const uid = props.conversation?.externalThreadId || props.conversation?.contact?.zaloUid;
+  const uid = realZaloUid(props.conversation);
   return { accountId, uid };
 }
 
 function onOpenInviteDialog() {
+  // Chat nội bộ chưa có UID: chỉ cần nick + SĐT, UID tra lúc bấm "Gửi lời mời".
+  if (isVirtualConv.value) {
+    if (!props.conversation?.zaloAccount?.id || !props.conversation?.contact?.phone) {
+      toast.error('Khách chưa có SĐT — không tra được Zalo để kết bạn');
+      return;
+    }
+    showInviteDialog.value = true;
+    return;
+  }
   const { accountId, uid } = getActionContext();
   if (!accountId || !uid) {
     toast.error('Thiếu thông tin nick hoặc KH');
@@ -2121,6 +2137,10 @@ function onOpenInviteDialog() {
 }
 
 async function onSendInviteSubmit(message: string) {
+  if (isVirtualConv.value) {
+    await sendInviteFromInternalChat(message);
+    return;
+  }
   const { accountId, uid } = getActionContext();
   if (!accountId || !uid) {
     toast.error('Thiếu thông tin nick hoặc KH');
@@ -2136,6 +2156,38 @@ async function onSendInviteSubmit(message: string) {
   } catch (err: any) {
     toast.error(formatFriendOpError(err, 'Không thể gửi lời mời'));
     console.error('[send-invite] failed', { accountId, uid, err: err?.response?.data || err });
+  } finally {
+    actionLoading.value = false;
+  }
+}
+
+// Chat nội bộ: tra SĐT bằng nick của hội thoại → gắn KH vào chat Zalo → gửi lời mời bằng UID thật
+// → chuyển sang chat Zalo. Chat nội bộ vẫn giữ nguyên (1 KH hiện 2 dòng là chủ ý).
+async function sendInviteFromInternalChat(message: string) {
+  const conv = props.conversation;
+  const accountId = conv?.zaloAccount?.id;
+  const contactId = conv?.contact?.id;
+  const phone = conv?.contact?.phone;
+  if (!accountId || !contactId || !phone) {
+    toast.error('Khách chưa có SĐT — không tra được Zalo để kết bạn');
+    return;
+  }
+  actionLoading.value = true;
+  try {
+    const r = await linkContactToZalo({ contactId, phone, accountId });
+    if (r.status !== 'linked') {
+      toast.error(r.status === 'not_found' ? `${r.message} — chưa gửi được lời mời` : r.message);
+      return;
+    }
+    showInviteDialog.value = false;
+    try {
+      await api.post(`/zalo-accounts/${accountId}/friends/requests`, { userId: r.uid, message });
+      toast.success('Đã tìm thấy Zalo và gửi lời mời kết bạn — chuyển sang chat Zalo');
+    } catch (err: any) {
+      // Đã gắn được Zalo → vẫn sang chat Zalo, sale bấm "Kết bạn" lại ở đó.
+      toast.error(formatFriendOpError(err, 'Đã tìm thấy Zalo nhưng chưa gửi được lời mời'));
+    }
+    emit('switch-conversation', r.conversationId);
   } finally {
     actionLoading.value = false;
   }

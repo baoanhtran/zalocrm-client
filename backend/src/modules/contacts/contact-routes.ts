@@ -16,6 +16,7 @@ import { requireAnyGrant, requireGrant } from '../rbac/rbac-middleware.js';
 import { logger } from '../../shared/utils/logger.js';
 import { mergeContacts } from './merge-service.js';
 import { findExistingUserConversation } from '../chat/conversation-resolver.js';
+import { buildVirtualChatWelcome } from './virtual-chat-welcome.js';
 import { runContactIntelligence } from './contact-intelligence.js';
 import { backfillGlobalId, backfillOrphanFriends } from './backfill-global-id.js';
 import { backfillMissingFriends } from './backfill-missing-friends.js';
@@ -817,6 +818,9 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
     try {
       const user = request.user!;
       const { id: contactId } = request.params as { id: string };
+      // internal=true: nút "Chat nội bộ" — luôn mở chat nội bộ, kể cả KH đã có chat Zalo
+      // (1 KH hiện 2 dòng trong Tin nhắn là chủ ý). Không truyền = hành vi cũ của "Nhắn tin".
+      const { internal = false } = (request.body || {}) as { internal?: boolean };
 
       // 1. Verify contact thuộc org + visible
       const contact = await prisma.contact.findFirst({
@@ -858,7 +862,7 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
       // thật (isVirtual=false) trong phạm vi sale thấy → "Nhắn tin" mở ĐÚNG chat đó,
       // KHÔNG tạo virtual mới (trước đây bỏ qua → đẻ đoạn chat ảo trùng + welcome
       // "vừa tạo khách hàng" gây hiểu nhầm là tạo KH mới).
-      const realConv = await prisma.conversation.findFirst({
+      const realConv = internal ? null : await prisma.conversation.findFirst({
         where: {
           orgId: user.orgId,
           contactId,
@@ -930,13 +934,7 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
       // 5. M53.1 2026-05-30: Welcome AI message lần đầu — hardcode (KHÔNG gọi Gemini)
       // Anh chốt: khi sale tạo KH mới chưa có Zalo, AI Trợ Lý chào ngay + hướng dẫn
       // sale chat vào để lưu thông tin bổ sung. Không tốn token Gemini.
-      const khName = contact.crmName || contact.fullName || 'KH';
-      const khPhone = contact.phone || 'chưa có SĐT';
-      const welcomeContent =
-        `Chào anh/chị! Đây là kênh nhật ký chăm sóc cho KH **${khName}** (SĐT ${khPhone}) — KH này chưa có Zalo công khai.\n\n` +
-        `Anh/chị có thể chat vào đây để ghi nhật ký chăm sóc + bổ sung thông tin KH. ` +
-        `Mỗi tin anh/chị gõ, em sẽ tự động gợi ý câu hỏi khai thác và đề xuất cập nhật thông tin lên hệ thống.\n\n` +
-        `Để bắt đầu, anh/chị thử gõ vài thông tin đã biết về KH ${khName} (vd: tuổi, nghề nghiệp, khu vực muốn mua, ngân sách...) để em hỗ trợ nhé!`;
+      const welcomeContent = buildVirtualChatWelcome(contact.crmName || contact.fullName || 'KH', contact.phone);
 
       const welcomeLocalId = `local:${randomUUID()}`;
       const welcomeMessage = await prisma.message.create({
@@ -2157,6 +2155,9 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
           });
           if (!c) return reply.status(400).send({ error: 'attach contact not found' });
           linkedContactId = cid;
+          // Gắn theo UID vừa tra được → KH chắc chắn có Zalo. Không bật cờ thì KH từ khảo sát /
+          // nhập Excel đã có chat Zalo mà hồ sơ vẫn chỉ hiện "Tìm Zalo".
+          await prisma.contact.update({ where: { id: cid }, data: { hasZalo: true } }).catch(() => {});
         } else if (body.contactMode === 'create' || (!linkedContactId && body.phone)) {
           // Tạo Contact mới khi không match, hoặc khi user explicit chọn 'create'.
           // 2026-06-12 (anh báo lỗi "Ensure conversation failed" 500): trước khi tạo,

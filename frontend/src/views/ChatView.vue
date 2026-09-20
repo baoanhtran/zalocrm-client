@@ -83,7 +83,10 @@
       :editing-message="editingMessage"
       :typing-users="currentTypers"
       :show-contact-panel="showContactPanel"
+      :loading-older="loadingOlder"
+      :has-more-messages="hasMoreMessages"
       class="smax-msg-col"
+      @load-older="loadOlderMessages"
       @send="sendMessage"
       @ask-ai="generateAiSuggestion"
       @open-media-tab="onOpenMediaTab"
@@ -168,7 +171,8 @@ const router = useRouter();
 
 const {
   conversations, selectedConvId, selectedConv, messages,
-  loadingConvs, loadingMsgs, sendingMsg, searchQuery, accountFilter, extraFilters,
+  loadingConvs, loadingMsgs, loadingOlder, hasMoreMessages, loadOlderMessages,
+  sendingMsg, searchQuery, accountFilter, extraFilters,
   aiSuggestion, aiSuggestionLoading, aiSuggestionError,
   aiSummary, aiSummaryLoading, aiSentiment, aiSentimentLoading,
   fetchConversations, fetchAiConfig, fetchMessages, selectConversation, sendMessage,

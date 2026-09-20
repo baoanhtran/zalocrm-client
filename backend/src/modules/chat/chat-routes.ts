@@ -1214,7 +1214,16 @@ export async function chatRoutes(app: FastifyInstance) {
   }, async (request: FastifyRequest, reply: FastifyReply) => {
     const user = request.user!;
     const { id } = request.params as { id: string };
-    const { page = '1', limit = '50' } = request.query as QueryParams;
+    const { page = '1', limit = '50', offset } = request.query as QueryParams;
+    // 2026-09-20 — FE cuộn lên tải tin cũ gửi `offset` (= số tin đã tải) thay cho `page`.
+    // Danh sách sắp MỚI-NHẤT-TRƯỚC nên mỗi tin mới đến giữa chừng đẩy cả cửa sổ xuống
+    // 1 nấc: đếm theo trang thì nấc lệch đó làm NHẢY CÓC mất tin, đếm theo offset thì
+    // xấu nhất chỉ lấy chồng lên vài tin đã có (FE loại trùng theo id).
+    // `page` giữ nguyên cho caller cũ.
+    const takeN = Math.max(1, parseInt(limit) || 50);
+    const skipN = offset !== undefined
+      ? Math.max(0, parseInt(offset) || 0)
+      : (Math.max(1, parseInt(page) || 1) - 1) * takeN;
 
     const conversation = await prisma.conversation.findFirst({
       where: { id, orgId: user.orgId },
@@ -1237,8 +1246,8 @@ export async function chatRoutes(app: FastifyInstance) {
         // Primary sort by Zalo Snowflake (zaloMsgIdNum) — match Zalo Web order.
         // sentAt fallback chỉ kick in cho row chưa có zaloMsgIdNum (CRM in-flight).
         orderBy: [{ zaloMsgIdNum: { sort: 'desc', nulls: 'last' } }, { sentAt: 'desc' }],
-        skip: (parseInt(page) - 1) * parseInt(limit),
-        take: parseInt(limit),
+        skip: skipN,
+        take: takeN,
         select: {
           id: true,
           zaloMsgId: true,
@@ -1434,7 +1443,7 @@ export async function chatRoutes(app: FastifyInstance) {
         senderResolved: isRedacted ? null : resolveSender(m),
       };
     });
-    return { messages: redacted, total, page: parseInt(page), limit: parseInt(limit) };
+    return { messages: redacted, total, page: parseInt(page), limit: takeN, offset: skipN };
   });
 
   // ── Send message ─────────────────────────────────────────────────────────

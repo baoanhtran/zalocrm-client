@@ -358,8 +358,22 @@
       </div>
 
       <!-- ════════ Messages ════════ -->
-      <div ref="messagesContainer" class="messages chat-messages-area" :class="{ 'is-virtual-mode': isVirtualConv }">
+      <div
+        ref="messagesContainer"
+        class="messages chat-messages-area"
+        :class="{ 'is-virtual-mode': isVirtualConv }"
+        @scroll.passive="onMessagesScroll"
+      >
         <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-2" />
+
+        <!-- 2026-09-20 — Tin cũ hơn. Cuộn lên gần đỉnh là tự tải; nút bấm ở đây là
+             đường dự phòng cho chuột không cuộn tới nơi / màn hình quá cao. -->
+        <div v-if="!loading && (hasMoreMessages || loadingOlder)" class="older-bar">
+          <span v-if="loadingOlder" class="older-bar-loading">Đang tải tin nhắn cũ…</span>
+          <button v-else type="button" class="older-bar-btn" @click="requestOlder">
+            ↑ Xem tin nhắn cũ hơn
+          </button>
+        </div>
 
         <template v-for="item in displayItems" :key="item.key">
           <!-- Date divider -->
@@ -1050,6 +1064,7 @@ import MessageContextMenu from '@/components/chat/message-context-menu.vue';
 import TypingIndicator from '@/components/chat/typing-indicator.vue';
 import ReplyPreviewBar from '@/components/chat/reply-preview-bar.vue';
 import { planComposerSend, canSubmitComposer } from '@/components/chat/composer-send-rules';
+import { shouldLoadOlder } from '@/composables/message-pagination';
 import ForwardDialog from '@/components/chat/forward-dialog.vue';
 import RichTextEditor from '@/components/chat/rich-text-editor.vue';
 import TagCrmBar from '@/components/chat/TagCrmBar.vue';
@@ -1087,6 +1102,9 @@ const props = defineProps<{
   replyingTo?: Message | null;
   editingMessage?: Message | null;
   typingUsers?: { userId: string; userName: string }[];
+  // 2026-09-20 — phân trang tin cũ. Thiếu 2 cờ này thì thread chỉ hiện 100 tin mới nhất.
+  loadingOlder?: boolean;
+  hasMoreMessages?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -1104,6 +1122,8 @@ const emit = defineEmits<{
   'cancel-reply-edit': [];
   'typing': [];
   'refresh-thread': [];
+  // 2026-09-20: cuộn lên gần đỉnh (hoặc bấm nút) → ChatView gọi loadOlderMessages().
+  'load-older': [];
   // 2026-06-12 (anh chốt): nút "Chèn từ kho" → mở tab Media ở cột 4 (bỏ popover nổi).
   'open-media-tab': [];
   'care-status-changed': [value: string];
@@ -3088,23 +3108,67 @@ function getImageUrl(msg: Message): string | null {
   return null;
 }
 
+// 2026-09-20 — khi ghép tin CŨ vào đầu thread, mọi lệnh cuộn-xuống-đáy phải câm trong
+// chốc lát, kể cả các retry hẹn giờ mà scrollToBottom đã đặt từ trước. Không có chốt
+// này thì sale vừa cuộn lên đọc tin cũ là bị giật văng xuống đáy.
+let suppressAutoScrollUntil = 0;
+const autoScrollAllowed = () => Date.now() >= suppressAutoScrollUntil;
+
 /** Scroll xuống đáy (tin nhắn mới nhất). Retry sau khi images load. */
 function scrollToBottom(immediate = false) {
-  if (!messagesContainer.value) return;
+  if (!messagesContainer.value || !autoScrollAllowed()) return;
   const el = messagesContainer.value;
   el.scrollTop = el.scrollHeight;
   if (!immediate) {
     // Retry vài lần vì image load async — đảm bảo cuộn xuống tận cùng sau khi hình rendered
-    setTimeout(() => { if (el) el.scrollTop = el.scrollHeight; }, 100);
-    setTimeout(() => { if (el) el.scrollTop = el.scrollHeight; }, 400);
-    setTimeout(() => { if (el) el.scrollTop = el.scrollHeight; }, 1000);
+    setTimeout(() => { if (el && autoScrollAllowed()) el.scrollTop = el.scrollHeight; }, 100);
+    setTimeout(() => { if (el && autoScrollAllowed()) el.scrollTop = el.scrollHeight; }, 400);
+    setTimeout(() => { if (el && autoScrollAllowed()) el.scrollTop = el.scrollHeight; }, 1000);
   }
 }
 
-// Khi messages thêm (tin mới đến) → scroll mượt
+// Mốc neo giữ chỗ đang đọc khi tin cũ chèn vào đầu: nội dung dài thêm bao nhiêu px thì
+// cuộn xuống bấy nhiêu → khung hình đứng yên, sale đọc tiếp mạch chỗ đang dở.
+const olderScrollAnchor = ref<{ height: number; top: number } | null>(null);
+
+function requestOlder() {
+  if (!props.hasMoreMessages || props.loadingOlder) return;
+  const el = messagesContainer.value;
+  olderScrollAnchor.value = el ? { height: el.scrollHeight, top: el.scrollTop } : null;
+  emit('load-older');
+}
+
+function onMessagesScroll() {
+  const el = messagesContainer.value;
+  if (!el) return;
+  if (shouldLoadOlder({
+    scrollTop: el.scrollTop,
+    hasMore: !!props.hasMoreMessages,
+    loading: !!props.loadingOlder,
+  })) requestOlder();
+}
+
+// Khi messages thêm (tin mới đến) → scroll mượt.
+// Ngoại lệ: vừa ghép tin CŨ vào đầu → giữ nguyên chỗ đang đọc, KHÔNG cuộn xuống đáy.
 watch(() => props.messages.length, async () => {
+  const anchor = olderScrollAnchor.value;
+  if (anchor) {
+    olderScrollAnchor.value = null;
+    suppressAutoScrollUntil = Date.now() + 1200;  // > retry 1000ms cuối của scrollToBottom
+    await nextTick();
+    const el = messagesContainer.value;
+    if (el) el.scrollTop = el.scrollHeight - anchor.height + anchor.top;
+    return;
+  }
   await nextTick();
   scrollToBottom();
+});
+
+// Tải xong mà KHÔNG thêm tin nào (đã chạm đáy lịch sử) thì watcher độ dài phía trên
+// không chạy → phải tự dọn mốc neo, nếu không tin mới đến sau đó sẽ khôi phục nhầm
+// vị trí cuộn cũ thay vì nhảy xuống đáy.
+watch(() => props.loadingOlder, (now, before) => {
+  if (before && !now) olderScrollAnchor.value = null;
 });
 
 // Khi đổi sang conv khác → reset scroll xuống đáy ngay + retry sau khi messages
@@ -3113,6 +3177,9 @@ watch(() => props.messages.length, async () => {
 //   (matching Zalo/Messenger native behavior). Skip mobile để tránh bật bàn phím ảo.
 watch(() => props.conversation?.id, async (newId) => {
   if (!newId) return;
+  // Đổi conv → bỏ mọi trạng thái cuộn còn treo của conv cũ, cho phép cuộn xuống đáy lại.
+  olderScrollAnchor.value = null;
+  suppressAutoScrollUntil = 0;
   await nextTick();
   scrollToBottom();
   // Auto-focus editor — skip mobile (window.innerWidth < 768) tránh bật keyboard
@@ -3916,6 +3983,18 @@ watch(() => props.editingMessage?.id, async (id) => {
   text-align: center; margin: 13px 0 9px;
   color: var(--smax-grey-700); font-size: 11px;
 }
+/* 2026-09-20 — dải "tin cũ hơn" ở đỉnh thread. */
+.older-bar {
+  display: flex; justify-content: center; align-items: center;
+  padding: 6px 0 10px; min-height: 30px;
+}
+.older-bar-loading { color: var(--smax-grey-700); font-size: 11px; }
+.older-bar-btn {
+  border: 1px solid var(--smax-grey-300); border-radius: 14px;
+  background: #fff; color: var(--smax-grey-700);
+  font-size: 11px; padding: 4px 13px; cursor: pointer;
+}
+.older-bar-btn:hover { background: var(--smax-primary-soft); color: var(--smax-primary); }
 /* E07 Image lightbox — anh chốt 2026-05-21: nút ‹ › + arrow keys, KHÔNG loop. */
 .lightbox-wrap {
   position: relative;

@@ -10,6 +10,7 @@ import { applyPendingTags, registerPendingTags } from '@/composables/use-pending
 import { usePrivacyStore } from '@/stores/privacy';
 import { useWorkScope } from '@/composables/use-work-scope';
 import { classifyIncoming } from '@/composables/work-scope-logic';
+import { mergeOlderMessages, olderPageOffset } from '@/composables/message-pagination';
 import { useToast } from '@/composables/use-toast';
 
 interface ZaloAccount {
@@ -227,6 +228,12 @@ function compareMessages(a: Message, b: Message): number {
 // In-memory cache per-conv messages — quay lại conv cũ render ngay, fetch fresh background.
 const messagesCache = new Map<string, Message[]>();
 
+/** Số tin mỗi lần gọi — trang đầu và mỗi lượt cuộn lên tải thêm đều dùng số này. */
+const MESSAGE_PAGE_SIZE = 100;
+// Tổng số tin của conv theo backend (lookaside per-conv) — để biết còn tin cũ hay hết.
+// Tách khỏi messagesCache vì cache chỉ giữ tin ĐÃ tải, không biết tổng.
+const messagesTotalCache = new Map<string, number>();
+
 // M-tier tab-switch fix (2026-05-21) — per-filter-key conversation list cache.
 // Stale-while-revalidate: chuyển tab → paint từ cache NGAY (0ms lag), bg fetch update.
 // Trước fix: mỗi lần chuyển tab user chờ 1-3s HTTP+DB roundtrip → loading spinner.
@@ -314,6 +321,10 @@ export function useChat() {
   const messagesConvId = ref<string | null>(null);
   const loadingConvs = ref(false);
   const loadingMsgs = ref(false);
+  // 2026-09-20 — cuộn lên tải tin cũ. `loadingOlder` chặn gọi chồng, `hasMoreMessages`
+  // để MessageThread biết có nên hiện nút "Xem tin nhắn cũ hơn" không.
+  const loadingOlder = ref(false);
+  const hasMoreMessages = ref(false);
   const sendingMsg = ref(false);
   // Wave 1 (2026-05-21) — KH đang gõ realtime. Key = conversationId (FE map từ
   // threadId qua selectedConv). Value = timestamp ms cuối cùng nhận typing event.
@@ -520,6 +531,9 @@ export function useChat() {
     if (messagesConvId.value !== convId) {
       messages.value = [];
       messagesConvId.value = convId;
+      // Đổi conv → trạng thái phân trang của conv cũ không còn ý nghĩa.
+      loadingOlder.value = false;
+      hasMoreMessages.value = false;
     }
     // Cache-then-refresh: nếu đã từng load conv này, set list ngay từ cache để
     // user thấy giao diện tin nhắn lập tức; rồi fetch fresh in background.
@@ -530,13 +544,17 @@ export function useChat() {
       if (messagesConvId.value === convId) {
         messages.value = cached;
         loadingMsgs.value = false;
+        // Mở lại conv đã từng tải: khôi phục ngay cờ "còn tin cũ" từ tổng đã biết,
+        // khỏi bắt sale chờ HTTP mới thấy nút "Xem tin nhắn cũ hơn".
+        const knownTotal = messagesTotalCache.get(convId);
+        if (knownTotal !== undefined) hasMoreMessages.value = cached.length < knownTotal;
       }
     } else {
       loadingMsgs.value = true;
     }
     try {
       const res = await api.get(`/conversations/${convId}/messages`, {
-        params: { limit: 100 },
+        params: { limit: MESSAGE_PAGE_SIZE },
       });
       const list = (res.data.messages as RawMessage[]).map(normalizeMessage);
       // Merge thay vì wholesale replace: giữ msgs đã insert qua socket trong lúc HTTP
@@ -565,10 +583,67 @@ export function useChat() {
       if (isConvCurrent(convId)) {
         messagesCache.set(convId, [...messages.value]);
       }
+      // 2026-09-20 — `total` là TỔNG tin của conv trong DB, còn messages.value chỉ là
+      // phần đã tải (trang đầu + các trang cũ đã cuộn). Lệch nhau = còn tin cũ để tải.
+      // Lưu ý socketOnly phía trên đã giữ lại các trang cũ đã tải, nên refresh conv
+      // KHÔNG làm mất tin cũ và không làm cờ này nhảy lung tung.
+      const total = Number(res.data.total ?? list.length);
+      if (Number.isFinite(total)) {
+        messagesTotalCache.set(convId, total);
+        if (isConvCurrent(convId)) hasMoreMessages.value = messages.value.length < total;
+      }
     } catch (err) {
       console.error('Failed to fetch messages:', err);
     } finally {
       if (selectedConvId.value === convId) loadingMsgs.value = false;
+    }
+  }
+
+  /**
+   * Tải thêm MỘT trang tin cũ hơn và ghép vào đầu danh sách (2026-09-20).
+   *
+   * Gọi khi sale cuộn lên gần đỉnh khung chat, hoặc bấm nút "Xem tin nhắn cũ hơn".
+   * Trước đây không có đường này: khung chat nạp đúng 100 tin mới nhất rồi thôi, nên
+   * hội thoại dày tin bị cắt cụt (ca Hoàng Việt Anh × nick Linh: 333 tin trong 4 ngày,
+   * sale chỉ nhìn thấy ~2 tiếng cuối).
+   *
+   * Trả về số tin cũ THỰC SỰ thêm được — MessageThread dùng để biết có cần giữ lại
+   * vị trí cuộn hay không.
+   */
+  async function loadOlderMessages(): Promise<number> {
+    const convId = messagesConvId.value;
+    if (!convId || loadingOlder.value || !hasMoreMessages.value) return 0;
+    loadingOlder.value = true;
+    try {
+      const res = await api.get(`/conversations/${convId}/messages`, {
+        // offset = số tin đã tải, KHÔNG phải số trang: tin mới đến giữa chừng đẩy cửa
+        // sổ xuống 1 nấc, đếm theo trang sẽ nhảy cóc mất tin (xem message-pagination.ts).
+        params: { limit: MESSAGE_PAGE_SIZE, offset: olderPageOffset(messages.value.length) },
+      });
+      const older = (res.data.messages as RawMessage[]).map(normalizeMessage);
+      // Response về muộn sau khi sale đã sang conv khác → vứt, không ghi nhầm thread.
+      if (!isConvCurrent(convId)) return 0;
+
+      const merged = mergeOlderMessages(messages.value, older, compareMessages);
+      const added = merged.length - messages.value.length;
+      if (added > 0) {
+        messages.value = merged;
+        messagesCache.set(convId, [...messages.value]);
+      }
+
+      const total = Number(res.data.total ?? 0);
+      if (Number.isFinite(total) && total > 0) messagesTotalCache.set(convId, total);
+      // Backend trả rỗng = đã chạm đáy lịch sử; nếu không thì so tổng như trang đầu.
+      // Chốt chặn `added === 0`: trang về toàn tin đã có (không nên xảy ra với offset
+      // theo số tin đã tải) thì vẫn dừng, tránh cuộn lên là gọi API vô hạn.
+      hasMoreMessages.value = older.length > 0 && added > 0
+        && (Number.isFinite(total) ? messages.value.length < total : true);
+      return added;
+    } catch (err) {
+      console.error('Failed to load older messages:', err);
+      return 0;
+    } finally {
+      loadingOlder.value = false;
     }
   }
 
@@ -1180,6 +1255,9 @@ export function useChat() {
     messages,
     loadingConvs,
     loadingMsgs,
+    loadingOlder,
+    hasMoreMessages,
+    loadOlderMessages,
     sendingMsg,
     searchQuery,
     accountFilter,

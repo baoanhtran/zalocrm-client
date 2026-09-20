@@ -37,6 +37,9 @@
         :ai-suggestion="(null as any)"
         :ai-suggestion-loading="false"
         :ai-suggestion-error="(null as any)"
+        :loading-older="loadingOlder"
+        :has-more-messages="hasMoreMessages"
+        @load-older="loadOlderMessages"
         @send="handleSend"
         @refresh-thread="selectedConvId && fetchMessages(selectedConvId)"
         style="flex: 1; min-height: 0;"
@@ -54,7 +57,8 @@ import { useOfflineQueue } from '@/composables/use-offline-queue';
 
 const {
   conversations, selectedConvId, selectedConv, messages,
-  loadingConvs, loadingMsgs, sendingMsg, searchQuery, accountFilter,
+  loadingConvs, loadingMsgs, loadingOlder, hasMoreMessages, loadOlderMessages,
+  sendingMsg, searchQuery, accountFilter,
   fetchConversations, fetchMessages, selectConversation, sendMessage, sendMessageTo,
   initSocket, destroySocket,
 } = useChat();

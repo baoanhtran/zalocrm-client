@@ -1064,7 +1064,7 @@ import MessageContextMenu from '@/components/chat/message-context-menu.vue';
 import TypingIndicator from '@/components/chat/typing-indicator.vue';
 import ReplyPreviewBar from '@/components/chat/reply-preview-bar.vue';
 import { planComposerSend, canSubmitComposer } from '@/components/chat/composer-send-rules';
-import { shouldLoadOlder } from '@/composables/message-pagination';
+import { shouldLoadOlder, findByLoadingOlder } from '@/composables/message-pagination';
 import ForwardDialog from '@/components/chat/forward-dialog.vue';
 import RichTextEditor from '@/components/chat/rich-text-editor.vue';
 import TagCrmBar from '@/components/chat/TagCrmBar.vue';
@@ -1102,9 +1102,12 @@ const props = defineProps<{
   replyingTo?: Message | null;
   editingMessage?: Message | null;
   typingUsers?: { userId: string; userName: string }[];
-  // 2026-09-20 — phân trang tin cũ. Thiếu 2 cờ này thì thread chỉ hiện 100 tin mới nhất.
+  // 2026-09-20 — phân trang tin cũ. Thiếu 3 thứ này thì thread chỉ hiện 100 tin mới nhất.
   loadingOlder?: boolean;
   hasMoreMessages?: boolean;
+  // 2026-09-22 — truyền thẳng HÀM thay vì emit: nút nhảy-tới-tin-gốc cần `await`
+  // từng trang cũ để biết đã tìm thấy chưa, mà emit thì không trả về được gì.
+  loadOlder?: () => Promise<number>;
 }>();
 
 const emit = defineEmits<{
@@ -1122,8 +1125,6 @@ const emit = defineEmits<{
   'cancel-reply-edit': [];
   'typing': [];
   'refresh-thread': [];
-  // 2026-09-20: cuộn lên gần đỉnh (hoặc bấm nút) → ChatView gọi loadOlderMessages().
-  'load-older': [];
   // 2026-06-12 (anh chốt): nút "Chèn từ kho" → mở tab Media ở cột 4 (bỏ popover nổi).
   'open-media-tab': [];
   'care-status-changed': [value: string];
@@ -1306,19 +1307,50 @@ const lastSelfMessageId = computed<string | null>(() => {
 // trong album KHÔNG render qua MessageBubble component, chỉ là <img> trong wrap).
 let jumpHighlightTimer: ReturnType<typeof setTimeout> | null = null;
 
-function jumpToReply(replyMsgId: string) {
-  // replyMsgId là zaloMsgId (Snowflake từ Zalo) — match với message.zaloMsgId
-  const target = props.messages.find((m) => m.zaloMsgId === replyMsgId);
+/**
+ * Câu báo khi lục hết lịch sử vẫn không có tin gốc (2026-09-22).
+ *
+ * Gần như luôn là một lý do: tin gốc được gửi TRƯỚC khi CRM ghi nhận hội thoại —
+ * điển hình là lời chào kèm lời mời kết bạn gửi thẳng từ Zalo của sale. Zalo không
+ * phát lời chào đó ra như sự kiện tin nhắn nên CRM không có gì để lưu. Nói thẳng ra
+ * như vậy, kèm thời điểm, thay vì đổ cho "ngoài 50 tin gần nhất" (sai cả con số lẫn
+ * nguyên nhân) khiến sale tưởng dữ liệu bị mất.
+ */
+function missingOriginalNotice(replyMsgId: string): string {
+  const owner = props.messages.find((m) => m.reply?.msgId === replyMsgId);
+  const ts = Number(owner?.reply?.ts ?? 0);
+  if (!ts) return 'Tin gốc được gửi trước khi CRM ghi nhận hội thoại này nên không lưu lại được';
+  return `Tin gốc (${formatInOrgTz(ts)}) được gửi trước khi CRM ghi nhận hội thoại này nên không lưu lại được`;
+}
+
+async function jumpToReply(replyMsgId: string) {
+  // replyMsgId là zaloMsgId (Snowflake từ Zalo) — match với message.zaloMsgId.
+  // 2026-09-22: tin gốc thường nằm NGOÀI khung đang tải (hội thoại dày cả nghìn tin)
+  // → tải lùi từng trang cũ cho tới khi thấy, thay vì tìm một lần rồi bỏ cuộc.
+  // Chặn tự-cuộn-xuống-đáy trong lúc tải, nếu không mỗi trang về là bị giật xuống đáy.
+  const wasSearching = props.hasMoreMessages && !props.messages.some((m) => m.zaloMsgId === replyMsgId);
+  const target = await findByLoadingOlder<Message>({
+    find: () => props.messages.find((m) => m.zaloMsgId === replyMsgId),
+    hasMore: () => !!props.hasMoreMessages,
+    loadOlder: async () => {
+      suppressAutoScrollUntil = Date.now() + 2000;  // gia hạn mỗi vòng
+      return (await props.loadOlder?.()) ?? 0;
+    },
+  });
   if (!target) {
-    toast.push('Tin gốc không có trong khung chat (có thể nằm ngoài 50 tin gần nhất)');
+    toast.push(missingOriginalNotice(replyMsgId));
     return;
   }
+  // Chờ Vue render xong các trang vừa ghép vào rồi mới truy DOM.
+  if (wasSearching) await nextTick();
   // Query DOM — `data-msg-id` có trên `.msg-bubble-wrap` (single) + `.album-tile` (album).
   const el = document.querySelector(`[data-msg-id="${target.id}"]`) as HTMLElement | null;
   if (!el) {
     toast.push('Tin gốc không có trong khung chat hiện tại');
     return;
   }
+  // Tự-cuộn-xuống-đáy phải câm cho tới khi cuộn mượt tới tin gốc xong.
+  suppressAutoScrollUntil = Date.now() + 1500;
   el.scrollIntoView({ behavior: 'smooth', block: 'center' });
 
   // Highlight wrap chứa element — `.msg-bubble-wrap` cho single, `.msg-album-wrap` cho album.
@@ -3135,7 +3167,7 @@ function requestOlder() {
   if (!props.hasMoreMessages || props.loadingOlder) return;
   const el = messagesContainer.value;
   olderScrollAnchor.value = el ? { height: el.scrollHeight, top: el.scrollTop } : null;
-  emit('load-older');
+  void props.loadOlder?.();
 }
 
 function onMessagesScroll() {

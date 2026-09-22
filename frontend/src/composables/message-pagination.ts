@@ -55,3 +55,32 @@ export function mergeOlderMessages<T extends { id: string }>(
   if (!fresh.length) return existing;
   return [...fresh, ...existing].sort(compare);
 }
+
+/**
+ * Dò một tin trong lịch sử, tải lùi từng trang cũ cho tới khi thấy (2026-09-22).
+ *
+ * Dùng cho nút nhảy-tới-tin-gốc: bấm vào ô trả lời của một tin từ tuần trước thì
+ * tin gốc thường CHƯA nằm trong khung đang tải. Trước đây chỗ đó tìm đúng một lần
+ * rồi báo "Tin gốc không có trong khung chat" — sai, vì tin vẫn nằm trong DB.
+ *
+ * Dừng khi: thấy tin / hết tin cũ / một trang trả về 0 tin / chạm trần `maxRounds`
+ * (trần để hội thoại vài nghìn tin không treo giao diện hàng chục giây).
+ */
+export async function findByLoadingOlder<T>(opts: {
+  find: () => T | undefined | null;
+  hasMore: () => boolean;
+  loadOlder: () => Promise<number>;
+  maxRounds?: number;
+}): Promise<T | null> {
+  const found = opts.find();
+  if (found) return found;
+
+  const maxRounds = opts.maxRounds ?? 20;
+  for (let round = 0; round < maxRounds && opts.hasMore(); round++) {
+    const added = await opts.loadOlder();
+    if (added <= 0) return null;   // chạm đáy lịch sử
+    const hit = opts.find();
+    if (hit) return hit;
+  }
+  return null;
+}

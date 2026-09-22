@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Nguyễn Tiến Lộc
 import { describe, it, expect } from 'vitest';
-import { mergeOlderMessages, shouldLoadOlder, olderPageOffset } from './message-pagination';
+import { mergeOlderMessages, shouldLoadOlder, olderPageOffset, findByLoadingOlder } from './message-pagination';
 
 interface M { id: string; n: number }
 const cmp = (a: M, b: M) => a.n - b.n;
@@ -59,5 +59,65 @@ describe('olderPageOffset', () => {
   it('số âm/rác → kẹp về 0', () => {
     expect(olderPageOffset(-5)).toBe(0);
     expect(olderPageOffset(Number.NaN)).toBe(0);
+  });
+});
+
+describe('findByLoadingOlder', () => {
+  function rig(pages: string[][], target: string, hasMoreAfterAll = false) {
+    const loaded: string[] = [];
+    let round = 0;
+    return {
+      loaded,
+      calls: () => round,
+      opts: {
+        find: () => loaded.find(x => x === target),
+        hasMore: () => (round < pages.length ? true : hasMoreAfterAll),
+        loadOlder: async () => {
+          const page = pages[round++] ?? [];
+          loaded.push(...page);
+          return page.length;
+        },
+      },
+    };
+  }
+
+  it('đã có sẵn trong khung → trả về luôn, KHÔNG gọi tải trang cũ', async () => {
+    const r = rig([['x']], 'a');
+    r.loaded.push('a');
+    await expect(findByLoadingOlder(r.opts)).resolves.toBe('a');
+    expect(r.calls()).toBe(0);
+  });
+
+  it('nằm ở trang cũ thứ hai → tải lùi tới khi thấy rồi dừng', async () => {
+    const r = rig([['b', 'c'], ['d', 'a'], ['e']], 'a');
+    await expect(findByLoadingOlder(r.opts)).resolves.toBe('a');
+    expect(r.calls()).toBe(2);
+  });
+
+  it('hết tin cũ để tải → trả null, không lặp vô hạn', async () => {
+    const r = rig([['b']], 'a');
+    await expect(findByLoadingOlder(r.opts)).resolves.toBeNull();
+  });
+
+  it('trang cũ trả về rỗng (chạm đáy lịch sử) → dừng ngay', async () => {
+    let round = 0;
+    const res = await findByLoadingOlder({
+      find: () => undefined,
+      hasMore: () => true,
+      loadOlder: async () => { round++; return 0; },
+    });
+    expect(res).toBeNull();
+    expect(round).toBe(1);
+  });
+
+  it('chặn trần số vòng để hội thoại khổng lồ không treo giao diện', async () => {
+    let round = 0;
+    await findByLoadingOlder({
+      find: () => undefined,
+      hasMore: () => true,
+      loadOlder: async () => { round++; return 100; },
+      maxRounds: 3,
+    });
+    expect(round).toBe(3);
   });
 });

@@ -39,7 +39,7 @@
         :ai-suggestion-error="(null as any)"
         :loading-older="loadingOlder"
         :has-more-messages="hasMoreMessages"
-        @load-older="loadOlderMessages"
+        :load-older="loadOlderMessages"
         @send="handleSend"
         @refresh-thread="selectedConvId && fetchMessages(selectedConvId)"
         style="flex: 1; min-height: 0;"

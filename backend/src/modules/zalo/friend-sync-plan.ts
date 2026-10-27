@@ -35,6 +35,16 @@ export function shouldProcessFriend(input: {
   return input.identityChanged || input.dueForRecheck;
 }
 
+// URL avatar Zalo có chữ ký `?key=…&time=…` đổi ở MỖI lần gọi API, link hết hạn sau ~60 ngày
+// (đo VPS BMA 2026-10-28: 580/604 bạn bè bị coi là "đổi avatar" mỗi chu kỳ; link cũ trả 403).
+// Khi QUYẾT ĐỊNH có xử lý bạn bè không thì so phần trước `?`. Lượt soát lại hằng ngày
+// (processFriend so URL đầy đủ) vẫn ghi link mới → link lưu trong DB không bao giờ quá hạn.
+export function avatarWithoutSignature(url: string | null | undefined): string | null {
+  if (!url) return null;
+  const q = url.indexOf('?');
+  return q === -1 ? url : url.slice(0, q);
+}
+
 // FNV-1a 32-bit — rải uid đều vào các giờ, ổn định qua các lần restart.
 function recheckSlotOf(uid: string): number {
   let h = 0x811c9dc5;

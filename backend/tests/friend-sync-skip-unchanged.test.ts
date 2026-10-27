@@ -104,6 +104,40 @@ describe('đồng bộ bạn bè — bỏ qua bạn bè không đổi', () => {
     );
   });
 
+  // Zalo trả URL avatar có chữ ký `?key=…&time=…` đổi ở MỖI lần gọi (hết hạn sau ~60 ngày).
+  // Đo VPS BMA 2026-10-28: 580/604 bạn bè bị coi là "đổi avatar" ở mọi chu kỳ chỉ vì chữ ký.
+  const AVATAR_OLD_SIG = 'https://s120-ava-talk.zadn.vn/1/2/abc123.jpg?key=OLDSIG&time=1790000000';
+  const AVATAR_NEW_SIG = 'https://s120-ava-talk.zadn.vn/1/2/abc123.jpg?key=NEWSIG&time=1800000000';
+
+  it('avatar chỉ đổi chữ ký (?key&time) → không tính là đổi, chỉ soát 1 lần/ngày', async () => {
+    zaloOpsMock.getAllFriends.mockResolvedValue([{ ...LIVE_FRIEND, avatar: AVATAR_NEW_SIG }]);
+    prismaMock.friend.findMany.mockResolvedValue([{ ...UNCHANGED_ROW, zaloAvatarUrl: AVATAR_OLD_SIG }]);
+    prismaMock.friend.update.mockResolvedValue({ id: 'f1', contactId: 'c1', zaloAccountId: 'za-sig', zaloUidInNick: 'uid-1' });
+    await runHourly('za-sig', 'cron', 24);
+    expect(applyFriendTransitionMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('lượt soát hằng ngày vẫn ghi link avatar chữ ký mới để link trong DB không hết hạn', async () => {
+    zaloOpsMock.getAllFriends.mockResolvedValue([{ ...LIVE_FRIEND, avatar: AVATAR_NEW_SIG }]);
+    prismaMock.friend.findMany.mockResolvedValue([{ ...UNCHANGED_ROW, zaloAvatarUrl: AVATAR_OLD_SIG }]);
+    prismaMock.friend.update.mockResolvedValue({ id: 'f1', contactId: 'c1', zaloAccountId: 'za-refresh', zaloUidInNick: 'uid-1' });
+    await runHourly('za-refresh', 'cron', 24);
+    expect(prismaMock.friend.update).toHaveBeenCalledTimes(1);
+    expect(prismaMock.friend.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { zaloAvatarUrl: AVATAR_NEW_SIG } }),
+    );
+  });
+
+  it('đổi ảnh đại diện thật (khác đường dẫn ảnh) → xử lý ngay ở mọi chu kỳ', async () => {
+    zaloOpsMock.getAllFriends.mockResolvedValue([
+      { ...LIVE_FRIEND, avatar: 'https://s120-ava-talk.zadn.vn/1/2/xyz789.jpg?key=NEWSIG&time=1800000000' },
+    ]);
+    prismaMock.friend.findMany.mockResolvedValue([{ ...UNCHANGED_ROW, zaloAvatarUrl: AVATAR_OLD_SIG }]);
+    prismaMock.friend.update.mockResolvedValue({ id: 'f1', contactId: 'c1', zaloAccountId: 'za-newpic', zaloUidInNick: 'uid-1' });
+    await runHourly('za-newpic', 'cron', 24);
+    expect(applyFriendTransitionMock).toHaveBeenCalledTimes(24);
+  });
+
   it('bạn bè mới (chưa có trong CRM) được xử lý ngay', async () => {
     prismaMock.friend.findMany.mockResolvedValue([]);
     await runHourly('za-new', 'cron', 1);

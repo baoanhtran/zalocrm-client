@@ -41,7 +41,7 @@ import { buildFriendUpdatedPayload } from '../../shared/friend-serializer.js';
 // getAllFriends() trả gender/dob/sdob cùng shape getUserInfo — tái dùng parse của cron.
 import { mapGender, parseBirthDate } from '../contacts/contact-profile-sync-cron.js';
 import { buildPhoneCapturePatch } from '../contacts/zalo-profile-capture.js';
-import { shouldProcessFriend, isDueForRecheck } from './friend-sync-plan.js';
+import { shouldProcessFriend, isDueForRecheck, avatarWithoutSignature } from './friend-sync-plan.js';
 
 export type SyncTrigger = 'manual' | 'connect' | 'cron';
 
@@ -240,14 +240,16 @@ async function syncFriendsForAccountImpl(
   const existingByUid = new Map(existingFriends.map((f) => [f.zaloUidInNick, f]));
 
   // Cron/connect: bỏ qua bạn bè không đổi (friend-sync-plan.ts). Manual: xử lý toàn bộ.
+  // Avatar so bỏ chữ ký ?key&time (đổi mỗi lần gọi Zalo) — xem avatarWithoutSignature.
   const now = Date.now();
+  const stableIdentity = (s: DiffSnapshot): DiffSnapshot => ({ ...s, zaloAvatarUrl: avatarWithoutSignature(s.zaloAvatarUrl) });
   const needsProcessing = (uid: string, snapshot: DiffSnapshot, targetStatus: 'accepted' | 'pending_sent') => {
     if (opts.trigger === 'manual') return true;
     const existing = existingByUid.get(uid);
     return shouldProcessFriend({
       existing,
       targetStatus,
-      identityChanged: !!existing && Object.keys(computeDiff(existing, snapshot)).length > 0,
+      identityChanged: !!existing && Object.keys(computeDiff(stableIdentity(existing), stableIdentity(snapshot))).length > 0,
       dueForRecheck: isDueForRecheck(uid, now),
     });
   };

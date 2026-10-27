@@ -41,6 +41,19 @@ function sameStringSet(a: string[], b: string[]): boolean {
   return true;
 }
 
+// So 2 danh sách không kể thứ tự, có kể phần tử lặp.
+function sameItemsAnyOrder(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  const sa = [...a].sort();
+  const sb = [...b].sort();
+  return sa.every((x, i) => x === sb[i]);
+}
+
+type FriendLabelJson = { id?: number; name?: string; color?: string; emoji?: string | null };
+function labelKeys(labels: FriendLabelJson[]): string[] {
+  return labels.map((l) => `${l.id}|${l.name}|${l.color}|${l.emoji ?? ''}`);
+}
+
 /**
  * Pull labels from a Zalo account via SDK, upsert into DB, then recompute Friend.zaloLabels
  * for every friend of that account. Returns { labels, friendsUpdated }.
@@ -392,6 +405,17 @@ export async function syncLabelsForAccount(
     for (const labelName of newNames) {
       const mirroredTag = `🔵 ${labelName}`;
       if (!newCrmTags.includes(mirroredTag)) newCrmTags.push(mirroredTag);
+    }
+
+    // 2026-10-28: full sync (theo cron đồng bộ bạn bè) bỏ qua bạn bè không đổi nhãn — trước
+    // đây ghi lại + bắn 'friend:updated' cho MỌI bạn bè mỗi chu kỳ (BMA ~5k event/chu kỳ,
+    // 100 nick thành ~100k). Delta (gán nhãn tay) vẫn ghi như cũ.
+    if (
+      !isDelta
+      && sameItemsAnyOrder(labelKeys(oldLabels as FriendLabelJson[]), labelKeys(newLabels))
+      && sameItemsAnyOrder(oldCrmTags, newCrmTags)
+    ) {
+      continue;
     }
 
     await prisma.friend.update({

@@ -3,11 +3,15 @@
 /**
  * friend-sync-cron.ts — Periodic Friend full-sync cho mọi connected nick.
  *
- * Mỗi 15 phút:
+ * Mỗi giờ (phút :07):
  *  - Query connected ZaloAccount (status='connected')
- *  - Iterate sequential, mỗi account ~5s + 200ms stagger giữa accounts
+ *  - Iterate sequential + 200ms stagger giữa accounts
  *  - Gọi syncFriendsForAccount (diff-then-emit) → catch alias/avatar/name change
- *    từ Zalo native app mà friend_event listener không bắt được
+ *    từ Zalo native app mà friend_event listener không bắt được. Bạn bè không đổi
+ *    được bỏ qua, mỗi bạn bè soát đầy đủ 1 lần/ngày (friend-sync-plan.ts tính lượt theo giờ).
+ *
+ * 2026-10-28: 15 phút → 1 giờ. Đo VPS BMA: 5 nick tốn 24s CPU mỗi chu kỳ; 100 nick chạy
+ * 15 phút/lần thì luồng Node bận gần như liên tục, kèm 400 lượt gọi getAllFriends/giờ.
  *
  * Mutex chống overlap: nếu chu kỳ trước chưa xong khi tick mới → skip tick.
  * Sequential thay vì parallel để tránh burst Zalo rate-limit + ổn định CPU/RAM
@@ -23,9 +27,9 @@ import { logger } from '../../shared/utils/logger.js';
 import { syncAccountFully } from './friend-sync-service.js';
 import { runSystemQuery } from '../../shared/tenant/tenant-context.js';
 
-// 15 phút. Đủ để bắt alias/name/avatar drift mà không spam Zalo rate-limit.
-// Sequential 50 nick × 5s = 250s = ~4min → fit trong 15min window có dư 11min.
-const CRON_SCHEDULE = '*/15 * * * *';
+// Mỗi giờ, lệch sang phút :07 để không chồng các cron chạy đúng :00. Phải giữ nhịp
+// 1 giờ: friend-sync-plan.ts chia lượt soát lại theo giờ (24 lượt = 1 ngày).
+const CRON_SCHEDULE = '7 * * * *';
 
 // 200ms stagger giữa accounts → smooth CPU + tránh burst SDK call.
 const STAGGER_MS = 200;

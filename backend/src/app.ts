@@ -409,7 +409,7 @@ async function bootstrap() {
     // Phase A — Real-time Zalo presence cache + bulk refresh 60s + socket emit
     const { startPresenceCron } = await import('./modules/zalo/presence-service.js');
     startPresenceCron(io);
-    // Friend full-sync periodic (*/15 min) — catch alias/name/avatar drift từ Zalo
+    // Friend full-sync periodic (mỗi giờ, phút :07) — catch alias/name/avatar drift từ Zalo
     // native app mà friend_event listener không bắt được (xem friend-sync-cron.ts)
     const { startFriendSyncCron } = await import('./modules/zalo/friend-sync-cron.js');
     startFriendSyncCron(io);

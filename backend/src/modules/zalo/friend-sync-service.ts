@@ -6,7 +6,10 @@
  * Single entry point cho mọi trigger:
  *  - Manual: POST /friends-db/sync (user click "↻ Làm mới ngay")
  *  - On-connect: zalo-pool.autoSyncOnConnect (lần đầu nick lên)
- *  - Cron:    friend-sync-cron.ts every 15 min cho mọi connected account
+ *  - Cron:    friend-sync-cron.ts mỗi giờ cho mọi connected account
+ *
+ * Cron + on-connect chỉ xử lý bạn bè mới / đổi trạng thái / đổi danh tính; bạn bè không
+ * đổi được soát đầy đủ 1 lần/ngày (friend-sync-plan.ts). Manual vẫn xử lý toàn bộ.
  *
  * Pull list:
  *  - api.getAllFriends() → accepted friends
@@ -38,6 +41,7 @@ import { buildFriendUpdatedPayload } from '../../shared/friend-serializer.js';
 // getAllFriends() trả gender/dob/sdob cùng shape getUserInfo — tái dùng parse của cron.
 import { mapGender, parseBirthDate } from '../contacts/contact-profile-sync-cron.js';
 import { buildPhoneCapturePatch } from '../contacts/zalo-profile-capture.js';
+import { shouldProcessFriend, isDueForRecheck } from './friend-sync-plan.js';
 
 export type SyncTrigger = 'manual' | 'connect' | 'cron';
 
@@ -52,8 +56,10 @@ export interface SyncFriendsResult {
   liveCount: number;
   /** Contact stub mới tạo do KH chưa có trong DB */
   createdContacts: number;
-  /** Friend rows được upsert (cả no-change cũng đếm vì applyFriendTransition không trả diff info) */
+  /** Friend rows đã xử lý đầy đủ (applyFriendTransition) — không gồm bạn bè bỏ qua vì không đổi */
   upsertedFriends: number;
+  /** Bạn bè không đổi gì nên bỏ qua trong chu kỳ cron/connect (friend-sync-plan.ts) */
+  skippedUnchanged: number;
   /** Số 'friend:updated' socket events đã emit (= số rows thực sự đổi field) */
   emittedCount: number;
   /** Số errors gặp phải khi process per-friend (chỉ log, không throw) */
@@ -156,6 +162,7 @@ async function syncFriendsForAccountImpl(
     liveCount: 0,
     createdContacts: 0,
     upsertedFriends: 0,
+    skippedUnchanged: 0,
     emittedCount: 0,
     errors: 0,
     durationMs: 0,
@@ -226,14 +233,33 @@ async function syncFriendsForAccountImpl(
       zaloAvatarUrl: true,
       zaloGlobalId: true,
       zaloUsername: true,
+      friendshipStatus: true,
+      relationshipKind: true,
     },
   });
   const existingByUid = new Map(existingFriends.map((f) => [f.zaloUidInNick, f]));
+
+  // Cron/connect: bỏ qua bạn bè không đổi (friend-sync-plan.ts). Manual: xử lý toàn bộ.
+  const now = Date.now();
+  const needsProcessing = (uid: string, snapshot: DiffSnapshot, targetStatus: 'accepted' | 'pending_sent') => {
+    if (opts.trigger === 'manual') return true;
+    const existing = existingByUid.get(uid);
+    return shouldProcessFriend({
+      existing,
+      targetStatus,
+      identityChanged: !!existing && Object.keys(computeDiff(existing, snapshot)).length > 0,
+      dueForRecheck: isDueForRecheck(uid, now),
+    });
+  };
 
   // Process accepted friends → friendshipStatus='accepted'
   for (const live of liveFriends) {
     const info = extractFriendInfo(live);
     if (!info) continue;
+    if (!needsProcessing(info.uid, info.snapshot, 'accepted')) {
+      result.skippedUnchanged++;
+      continue;
+    }
     try {
       await processFriend({
         accountId,
@@ -264,6 +290,10 @@ async function syncFriendsForAccountImpl(
   for (const req of sentRequests) {
     const info = extractFriendInfo(req);
     if (!info) continue;
+    if (!needsProcessing(info.uid, info.snapshot, 'pending_sent')) {
+      result.skippedUnchanged++;
+      continue;
+    }
     try {
       await processFriend({
         accountId,
@@ -292,7 +322,7 @@ async function syncFriendsForAccountImpl(
 
   result.durationMs = Date.now() - startedAt;
   logger.info(
-    `[friend-sync:${accountId}] trigger=${opts.trigger} live=${result.liveCount} upserted=${result.upsertedFriends} emitted=${result.emittedCount} created=${result.createdContacts} errors=${result.errors} dur=${result.durationMs}ms`,
+    `[friend-sync:${accountId}] trigger=${opts.trigger} live=${result.liveCount} upserted=${result.upsertedFriends} skipped=${result.skippedUnchanged} emitted=${result.emittedCount} created=${result.createdContacts} errors=${result.errors} dur=${result.durationMs}ms`,
   );
   return result;
 }
@@ -447,7 +477,7 @@ export interface SyncAccountFullyResult {
  * Sync TOÀN BỘ identity per-pair (friends + aliases + labels) cho 1 account.
  *
  * Single entry point dùng chung cho:
- *  - friend-sync-cron.ts (mỗi 15 phút loop accounts)
+ *  - friend-sync-cron.ts (mỗi giờ loop accounts)
  *  - zalo-pool.autoSyncOnConnect (lần đầu connect)
  *  - friend-routes /friends-db/sync (manual "↻ Làm mới ngay")
  *

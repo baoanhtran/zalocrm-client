@@ -71,7 +71,7 @@
             v-if="activeAccount"
             class="btn primary"
             :disabled="syncing"
-            title="Auto-sync mỗi 15 phút. Click để refresh ngay lập tức."
+            title="Tự đồng bộ mỗi giờ. Click để làm mới ngay lập tức."
             @click="onSync"
           >{{ syncing ? '↻ Đang làm mới…' : '↻ Làm mới ngay' }}</button>
         </header>

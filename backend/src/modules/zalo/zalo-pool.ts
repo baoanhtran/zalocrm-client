@@ -5,10 +5,8 @@
  * Handles QR login, session reconnect, message listener lifecycle,
  * and credential persistence to the database.
  *
- * Note: zca-js is imported via createRequire because its TypeScript
- * declarations don't expose named exports in ESM mode.
+ * Instance zca-js tạo qua zalo-client-factory.ts.
  */
-import { createRequire } from 'module';
 import type { Server } from 'socket.io';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../shared/database/prisma-client.js';
@@ -18,22 +16,8 @@ import { attachZaloListener, type UserInfoCacheEntry } from './zalo-listener-fac
 import { emitWebhook } from '../api/webhook-service.js';
 import { startMessageSync, stopMessageSync } from './zalo-message-sync.js';
 import { backfillIfEmpty } from './zalo-history-backfill.js';
-import { readFile } from 'fs/promises';
-import { imageSize } from 'image-size';
-import { withProxy } from './proxy-util.js';
+import { createZaloClient } from './zalo-client-factory.js';
 import { writeTransition, type ZaloStatus, type StatusReason } from './status-log-service.js';
-
-// zca-js has no reliable ESM type exports — load via CJS interop
-const require = createRequire(import.meta.url);
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const { Zalo } = require('zca-js') as { Zalo: new (opts: { logging: boolean; selfListen?: boolean; imageMetadataGetter?: (path: string) => Promise<{ width: number; height: number; size: number }> }) => any };
-
-async function imageMetadataGetter(filePath: string) {
-  const data = await readFile(filePath);
-  const info = imageSize(data);
-  if (!info.width || !info.height) throw new Error(`Cannot read image size: ${filePath}`);
-  return { width: info.width, height: info.height, size: data.length };
-}
 
 interface ZaloCredentials {
   cookie: any;
@@ -90,7 +74,23 @@ class ZaloAccountPool {
   private epochCounter = 0;
   // reconnecting: in-flight guard per account — chặn 2 luồng (autoReconnect 30s timer +
   // health-check cron) cùng vào reconnect() tạo WS chồng nhau.
-  private reconnecting = new Set<string>();
+  // 2026-10-28: value = "vé" của lượt reconnect đang giữ guard → chỉ lượt đó được nhả,
+  // và biết được loginQR đã giành nick (loginQR xoá guard) trong lúc lượt đang chờ.
+  private reconnecting = new Map<string, object>();
+
+  // ── 2026-10-28: giãn cách đăng nhập lại ──
+  // Khởi động app với 100 nick, trước đây cả 100 nick login cùng 1 giây từ 1 IP → dễ bị Zalo
+  // chặn tạm, CPU/RAM vọt. Mỗi reconnect chờ tới lượt; lượt sau cách lượt trước
+  // RECONNECT_SPACING_MS, theo thứ tự gọi (100 nick ≈ 5 phút mới lên đủ).
+  private static readonly RECONNECT_SPACING_MS = 3_000;
+  private nextReconnectSlotAt = 0;
+
+  private async waitReconnectSlot(): Promise<void> {
+    const now = Date.now();
+    const slot = Math.max(now, this.nextReconnectSlotAt);
+    this.nextReconnectSlotAt = slot + ZaloAccountPool.RECONNECT_SPACING_MS;
+    if (slot > now) await new Promise((resolve) => setTimeout(resolve, slot - now));
+  }
 
   // ── Sprint v3 (2026-06-03) — Sticky 24h Hold notification timers ──
   // Mỗi nick disconnect tạo 3 setTimeout (T+2 phút, T+6h, T+23h). Khi nick
@@ -189,7 +189,7 @@ class ZaloAccountPool {
     const epoch = ++this.epochCounter;
     // (5) Bump epoch + set instance mới NGAY → mọi autoReconnect timer cũ đang chờ (30s/2min)
     //     khi fire sẽ thấy epoch lệch / status mới và bỏ qua, không ghi đè instance QR mới.
-    const zalo = new Zalo({ logging: false, selfListen: true, imageMetadataGetter });
+    const zalo = createZaloClient(proxyUrl);
     this.instances.set(accountId, { zalo, api: null, status: 'qr_pending', lastActivity: new Date(), epoch });
     logger.info(`[zalo:${accountId}] loginQR — fresh instance created (epoch=${epoch}), waiting for QR event…`);
 
@@ -205,7 +205,8 @@ class ZaloAccountPool {
     const isCurrentEpoch = () => this.instances.get(accountId)?.epoch === epoch;
 
     try {
-      const api: any = await withProxy(proxyUrl, () => zalo.loginQR({}, (event: any) => {
+      // Proxy của nick (nếu có) đã gắn sẵn vào client lúc createZaloClient.
+      const api: any = await zalo.loginQR({}, (event: any) => {
         if (!isCurrentEpoch()) return; // phiên cũ bị thay → bỏ qua mọi event (FIX #6)
         switch (event.type) {
           case 0: // QRCodeGenerated
@@ -240,7 +241,7 @@ class ZaloAccountPool {
             });
             break;
         }
-      }));
+      });
 
       // FIX #6 (2026-06-16, code-review): epoch guard KHÔNG chỉ trong callback mà CẢ sau khi
       // loginQR resolve. Nếu giữa lúc chờ resolve có teardown + tạo instance MỚI (autoReconnect
@@ -328,6 +329,27 @@ class ZaloAccountPool {
 
   // Reconnect using previously saved session credentials
   async reconnect(accountId: string, credentials: ZaloCredentials, proxyUrl?: string | null): Promise<void> {
+    // Fix flap 2026-06-06: in-flight guard — chặn 2 luồng cùng reconnect 1 nick
+    // (autoReconnect 30s timer + health-check cron) tạo WS chồng nhau.
+    // 2026-10-28: đặt guard TRƯỚC khi chờ lượt → lời gọi trùng lúc đang chờ cũng bị bỏ.
+    if (this.reconnecting.has(accountId)) {
+      logger.info(`[zalo:${accountId}] reconnect() already in-flight, skip duplicate`);
+      return;
+    }
+    const guard = {};
+    this.reconnecting.set(accountId, guard);
+    const releaseGuard = () => {
+      if (this.reconnecting.get(accountId) === guard) this.reconnecting.delete(accountId);
+    };
+
+    // 2026-10-28: chờ lượt đăng nhập (xem waitReconnectSlot). Trong lúc chờ, sale có thể đã quét
+    // QR (loginQR xoá guard để giành nick) → nhường hẳn cho phiên QR.
+    await this.waitReconnectSlot();
+    if (this.reconnecting.get(accountId) !== guard) {
+      logger.info(`[zalo:${accountId}] reconnect() bỏ — nick đã được quét QR trong lúc chờ lượt đăng nhập`);
+      return;
+    }
+
     // FIX 2 nick-ghost (Anh chốt 2026-06-13): GUARD eligibility GOM 1 CHỖ. Mọi đường
     // reconnect (boot app.ts, health-check cron, route /reconnect tay, autoReconnect
     // timer) đều đi qua đây → đặt điều kiện "thẻ ma KHÔNG reconnect" tại nguồn duy nhất.
@@ -335,16 +357,24 @@ class ZaloAccountPool {
     //   • archivedAt!=null → nick đã xoá mềm/ẩn.
     // Mở WS cho thẻ ma bằng session cũ → 2 WS cùng tài khoản Zalo → KICKOUT_BY_WORKER
     // loop → "login treo". Chặn TỪ GỐC ở đây thay vì vá từng đường (DRY, không sót).
-    const eligibility = await runSystemQuery(() =>
-      prisma.zaloAccount.findUnique({
-        where: { id: accountId },
-        select: { zaloUid: true, archivedAt: true, disconnectReason: true },
-      }),
-    );
+    // 2026-10-28: đọc SAU khi chờ lượt → thấy cả thay đổi xảy ra lúc đang chờ (vd sale bấm Ngắt).
+    let eligibility;
+    try {
+      eligibility = await runSystemQuery(() =>
+        prisma.zaloAccount.findUnique({
+          where: { id: accountId },
+          select: { zaloUid: true, archivedAt: true, disconnectReason: true, proxyUrl: true },
+        }),
+      );
+    } catch (err) {
+      releaseGuard();
+      throw err;
+    }
     if (!eligibility || eligibility.zaloUid === null || eligibility.archivedAt !== null) {
       logger.info(
         `[zalo:${accountId}] reconnect() skip — thẻ ma/đã ẩn (zaloUid=${eligibility?.zaloUid ?? 'missing'}, archived=${eligibility?.archivedAt ? 'yes' : 'no'})`,
       );
+      releaseGuard();
       return;
     }
     // 2026-06-16 (Anh chốt: "Ngắt là ngắt thật"): GUARD MANUAL gom CHUNG 1 chỗ ở đây — chặn
@@ -354,30 +384,25 @@ class ZaloAccountPool {
     // hàm này). Bịt 1 chỗ thay vì vá từng đường (tránh sót như boot).
     if (eligibility.disconnectReason === 'manual') {
       logger.info(`[zalo:${accountId}] reconnect() skip — sale đã NGẮT THỦ CÔNG (manual), chỉ QR mới nối lại`);
+      releaseGuard();
       return;
     }
-
-    // Fix flap 2026-06-06: in-flight guard — chặn 2 luồng cùng reconnect 1 nick
-    // (autoReconnect 30s timer + health-check cron) tạo WS chồng nhau.
-    if (this.reconnecting.has(accountId)) {
-      logger.info(`[zalo:${accountId}] reconnect() already in-flight, skip duplicate`);
-      return;
-    }
-    this.reconnecting.add(accountId);
+    // Boot / health-check / zalo-operations không truyền proxy → dùng proxy lưu của nick.
+    const effectiveProxyUrl = proxyUrl === undefined ? eligibility.proxyUrl : proxyUrl;
 
     // Fix flap 2026-06-06: dọn listener/WS cũ trước khi tạo mới (tránh duplicate WS
     // → Zalo evict → 'closed' loop). stop() = ws.close(1000)+reset, an toàn.
     this.teardownExisting(accountId);
     const epoch = ++this.epochCounter;
-    const zalo = new Zalo({ logging: false, selfListen: true, imageMetadataGetter });
+    const zalo = createZaloClient(effectiveProxyUrl);
     this.instances.set(accountId, { zalo, api: null, status: 'connecting', lastActivity: new Date(), epoch });
 
     try {
-      const api: any = await withProxy(proxyUrl, () => zalo.login({
+      const api: any = await zalo.login({
         cookie: credentials.cookie,
         imei: credentials.imei,
         userAgent: credentials.userAgent,
-      }));
+      });
 
       const instance = this.instances.get(accountId)!;
       instance.api = api;
@@ -397,7 +422,7 @@ class ZaloAccountPool {
         void this.emitAccountEventToOrg(accountId, 'zalo:reconnect-failed', {
           accountId, error: 'Phiên đăng nhập không khớp nick này — cần quét QR lại.',
         });
-        this.reconnecting.delete(accountId);
+        releaseGuard();
         return;
       }
       instance.zaloUid = ownId;
@@ -447,7 +472,7 @@ class ZaloAccountPool {
       void this.emitAccountEventToOrg(accountId, 'zalo:reconnect-failed', { accountId, error: String(err) });
     } finally {
       // Fix flap 2026-06-06: luôn nhả in-flight guard dù thành công hay lỗi.
-      this.reconnecting.delete(accountId);
+      releaseGuard();
     }
   }
 

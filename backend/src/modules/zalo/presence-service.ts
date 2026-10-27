@@ -6,8 +6,11 @@
  * Architecture:
  *   - In-memory cache: Map<`${accountId}:${friendUid}`, { lastOnline, fetchedAt }>
  *   - TTL: 30s. Stale entries return cached value but trigger background refresh.
- *   - Bulk cron 60s: call api.getFriendOnlines() per account → update cache + emit
+ *   - Bulk cron 5 phút: call api.getFriendOnlines() per account → update cache + emit
  *     socket 'friend:presence' for live UI updates.
+ *     2026-10-28: 60s → 5 phút. Mỗi phút × mỗi nick = 1.440 lượt/ngày/nick (100 nick ≈ 144k
+ *     lượt gọi Zalo/ngày); FE chỉ dùng event để BẬT chấm online, mở hội thoại vẫn hỏi
+ *     lastOnline riêng → giãn chỉ làm chấm xanh hiện chậm tối đa 5 phút.
  *   - Single-uid fetch: api.lastOnline(uid) for on-demand (conv open).
  *
  * Privacy: Zalo returns `settings.show_online_status: false` if user disabled
@@ -128,8 +131,8 @@ let cronJob: cron.ScheduledTask | null = null;
 export function startPresenceCron(io: Server | null): void {
   ioRef = io;
 
-  // Every 60s — bulk refresh all connected accounts
-  cronJob = cron.schedule('*/1 * * * *', async () => {
+  // Mỗi 5 phút — bulk refresh all connected accounts
+  cronJob = cron.schedule('*/5 * * * *', async () => {
     // Cross-org sweep (mọi account connected mọi org) → runSystemQuery.
     const accounts = await runSystemQuery(() =>
       prisma.zaloAccount.findMany({
@@ -150,7 +153,7 @@ export function startPresenceCron(io: Server | null): void {
       });
     }
   });
-  logger.info('[presence] cron started — refresh every 60s');
+  logger.info('[presence] cron started — refresh every 5 min');
 }
 
 export function stopPresenceCron(): void {

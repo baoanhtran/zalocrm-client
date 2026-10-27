@@ -406,7 +406,7 @@ async function bootstrap() {
     // Phase 8 — Engagement heatmap classification (02:30 VN daily)
     const { startEngagementCron } = await import('./modules/engagement/engagement-cron.js');
     startEngagementCron();
-    // Phase A — Real-time Zalo presence cache + bulk refresh 60s + socket emit
+    // Phase A — Real-time Zalo presence cache + bulk refresh 5 phút + socket emit
     const { startPresenceCron } = await import('./modules/zalo/presence-service.js');
     startPresenceCron(io);
     // Friend full-sync periodic (mỗi giờ, phút :07) — catch alias/name/avatar drift từ Zalo

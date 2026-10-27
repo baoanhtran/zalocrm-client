@@ -26,7 +26,10 @@ export const DEFAULT_SDK_LIMITS: Record<OpCategory, CategoryLimit> = {
   group_admin:   { daily: 50,   burst: 5,  burstWindowMs: 60_000 },
   group_read:    { daily: 1000, burst: 20, burstWindowMs: 30_000 },
   friend_action: { daily: 30,   burst: 8,  burstWindowMs: 60_000 },
-  friend_read:   { daily: 500,  burst: 10, burstWindowMs: 30_000 }, // online/recommend/sent-req còn lại
+  friend_read:   { daily: 500,  burst: 10, burstWindowMs: 30_000 }, // recommend/sent-req còn lại
+  // 2026-10-28 — getFriendOnlines của cron trạng thái online (5 phút/lần = 288/ngày/nick),
+  // tách khỏi friend_read để không ăn quota của đồng bộ bạn bè.
+  presence:      { daily: 400,  burst: 5,  burstWindowMs: 60_000 },
   profile:       { daily: 10,   burst: 3,  burstWindowMs: 60_000 },
   query:         { daily: 2000, burst: 30, burstWindowMs: 30_000 },
   // 2026-06-06 (Anh chốt) — tách findUser + đồng bộ danh bạ ra khỏi friend_read.

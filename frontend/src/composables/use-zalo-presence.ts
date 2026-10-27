@@ -6,7 +6,7 @@
  * Source of truth: backend endpoint `/zalo-accounts/:accountId/profile/last-online/:userId`
  * — wraps Zalo SDK `api.lastOnline()` với cache 30s server-side.
  *
- * Real-time updates: subscribe socket 'friend:presence' từ presence-service cron 60s.
+ * Real-time updates: subscribe socket 'friend:presence' từ presence-service cron 5 phút.
  * Khi event tới, set lastOnline = now for friends in the online list.
  *
  * Privacy gate: nếu Zalo trả `show_online_status: false`, `showStatus = false` →

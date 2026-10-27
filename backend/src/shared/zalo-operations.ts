@@ -39,7 +39,11 @@ export type OpCategory =
   // 2026-06-06 (Anh chốt) — TÁCH friend_read cũ thành 3 nhóm để quota không ăn lẫn:
   | 'friend_lookup' // findUser (Tìm SĐT→UID — việc của chiến dịch gửi lời mời)
   | 'contact_sync'  // getAllFriends (đọc/đồng bộ danh bạ — chạy nền khi reconnect)
-  | 'friend_read'   // còn lại: online, recommendations, sent requests, alias list
+  | 'friend_read'   // còn lại: recommendations, sent requests, alias list
+  // 2026-10-28 — tách getFriendOnlines (cron trạng thái online) khỏi friend_read: cron gọi
+  // đều đặn cho mọi nick, từng ăn cạn 500 friend_read/ngày sau ~8 giờ → đồng bộ bạn bè
+  // (getSentFriendRequests) lỗi tới hết ngày.
+  | 'presence'
   | 'profile'       // update name, avatar, status
   | 'query';        // getUserInfo, getGroupInfo — read-only
 
@@ -625,7 +629,7 @@ async function getFriendOnlines(accountId: string) {
     return await exec(
       {
         accountId,
-        category: 'friend_read',
+        category: 'presence',
         operation: 'getFriendOnlines',
         suppressErrorLog: isMalformedJsonResponseError,
       },

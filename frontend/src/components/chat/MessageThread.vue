@@ -1670,7 +1670,7 @@ const contactTotalOut = computed(() => props.conversation?.contact?.totalOutboun
 
 // ── Real-time Zalo online presence (Phase A) ────────────────────────────────
 // Wire useZaloPresence composable → fetch via /profile/last-online/:uid
-// + subscribe socket 'friend:presence' để real-time update từ cron 60s.
+// + subscribe socket 'friend:presence' để real-time update từ cron 5 phút.
 // Privacy gate: nếu KH tắt show_online_status → indicator ẩn hoàn toàn.
 const presence = useZaloPresence(
   () => props.conversation?.zaloAccount?.id || null,

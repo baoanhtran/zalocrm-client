@@ -88,13 +88,15 @@ import { api } from '@/api/index';
 const props = defineProps<{ nicks: Array<{ id: string; displayName: string | null }>; embedded?: boolean }>();
 const emit = defineEmits<{ (e: 'close'): void; (e: 'saved'): void }>();
 
-type Cat = 'message' | 'reaction' | 'chat_action' | 'group_admin' | 'group_read' | 'friend_action' | 'friend_lookup' | 'contact_sync' | 'friend_read' | 'profile' | 'query';
+type Cat = 'message' | 'reaction' | 'chat_action' | 'group_admin' | 'group_read' | 'friend_action' | 'friend_lookup' | 'contact_sync' | 'friend_read' | 'presence' | 'profile' | 'query';
 const CAT_LABEL: Record<string, { nm: string; ds: string }> = {
   friend_action: { nm: 'Gửi lời mời kết bạn', ds: 'gửi/thu hồi lời mời' },
   // 2026-06-06 (Anh chốt) — tách findUser + đồng bộ danh bạ riêng.
   friend_lookup: { nm: 'Tìm SĐT → UID', ds: 'findUser — tìm khách cho chiến dịch' },
   contact_sync: { nm: 'Đồng bộ danh bạ', ds: 'getAllFriends — tải bạn bè từ Zalo (chạy nền)' },
-  friend_read: { nm: 'Đọc khác (lời mời/gợi ý)', ds: 'online, recommendations, sent-requests' },
+  friend_read: { nm: 'Đọc khác (lời mời/gợi ý)', ds: 'recommendations, sent-requests' },
+  // 2026-10-28 — tách khỏi friend_read để cron online không ăn quota đồng bộ bạn bè.
+  presence: { nm: 'Trạng thái online', ds: 'getFriendOnlines — chấm xanh online, 5 phút/lần' },
   message: { nm: 'Gửi tin nhắn', ds: 'tin sale + bot gửi đi' },
   reaction: { nm: 'Thả cảm xúc', ds: 'tim, like, hoa...' },
   chat_action: { nm: 'Thao tác hội thoại', ds: 'đọc, gõ, ghim...' },
@@ -106,7 +108,7 @@ const CAT_LABEL: Record<string, { nm: string; ds: string }> = {
 const GROUPS = [
   { title: '🤝 Kết bạn & tìm khách', cats: ['friend_action', 'friend_lookup', 'contact_sync', 'friend_read'] as Cat[] },
   { title: '💌 Tin nhắn & tương tác', cats: ['message', 'reaction', 'chat_action'] as Cat[] },
-  { title: '🔍 Đọc thông tin', cats: ['query', 'profile'] as Cat[] },
+  { title: '🔍 Đọc thông tin', cats: ['query', 'presence', 'profile'] as Cat[] },
   { title: '👥 Nhóm Zalo', cats: ['group_read', 'group_admin'] as Cat[] },
 ];
 
